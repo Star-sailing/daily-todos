@@ -29,8 +29,9 @@ self.addEventListener('activate', function(event) {
 });
 
 self.addEventListener('fetch', function(event) {
-  // Don't cache Supabase API calls
+  // Pass Supabase API calls through directly, don't cache
   if (event.request.url.includes('supabase.co')) {
+    event.respondWith(fetch(event.request));
     return;
   }
 
