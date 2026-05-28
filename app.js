@@ -74,7 +74,14 @@
     if (SUPABASE_URL === 'YOUR_SUPABASE_URL') {
       return false;
     }
-    supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, { realtime: { enabled: false } });
+    supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+      realtime: { enabled: false },
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: false
+      }
+    });
     return true;
   }
 
@@ -315,7 +322,8 @@
     currentTab: 'tabToday',
     calendarMonth: new Date().getMonth(),
     calendarYear: new Date().getFullYear(),
-    modalDate: null
+    modalDate: null,
+    historyMode: 'collapse' // 'collapse' or 'expand'
   };
 
   /* ==================================================================
@@ -364,6 +372,7 @@
     var today = getToday();
     var container = document.getElementById('historyList');
     var emptyEl = document.getElementById('historyEmpty');
+    var isExpanded = state.historyMode === 'expand';
 
     // Group past todos by date
     var dateGroups = new Map();
@@ -389,7 +398,7 @@
       var total = todos.length;
       var pct = Math.round((doneCount / total) * 100);
 
-      return '<div class="history-card" data-date="' + date + '">' +
+      return '<div class="history-card' + (isExpanded ? ' expanded' : '') + '" data-date="' + date + '">' +
         '<div class="history-card-header">' +
           '<div class="date-info">' +
             '<div class="date-label">' + formatDateShort(date) + '</div>' +
@@ -474,7 +483,7 @@
         } else {
           dotClass = 'dot-orange';
         }
-        dotHtml = '<span class="dot ' + dotClass + '">' + info.total + '</span>';
+        dotHtml = '<span class="dot ' + dotClass + '"></span>';
       }
 
       return '<div class="' + cls + '" data-date="' + cell.dateStr + '">' +
@@ -701,12 +710,42 @@
     }
   });
 
-  // History card expand/collapse
+  // History card expand/collapse (only in collapse mode)
   document.getElementById('historyList').addEventListener('click', function(e) {
+    if (state.historyMode !== 'collapse') return;
     var header = e.target.closest('.history-card-header');
     if (!header) return;
     var card = header.parentElement;
     card.classList.toggle('expanded');
+  });
+
+  // History mode toggle
+  document.getElementById('modeCollapse').addEventListener('click', function() {
+    if (state.historyMode === 'collapse') return;
+    state.historyMode = 'collapse';
+    document.getElementById('modeCollapse').classList.add('active');
+    document.getElementById('modeExpand').classList.remove('active');
+    renderHistory();
+  });
+
+  document.getElementById('modeExpand').addEventListener('click', function() {
+    if (state.historyMode === 'expand') return;
+    state.historyMode = 'expand';
+    document.getElementById('modeExpand').classList.add('active');
+    document.getElementById('modeCollapse').classList.remove('active');
+    renderHistory();
+  });
+
+  // History date picker — jump to date
+  document.getElementById('historyDatePicker').addEventListener('change', function() {
+    var targetDate = this.value;
+    if (!targetDate) return;
+    // If in collapse mode, temporarily expand just that card
+    var card = document.querySelector('.history-card[data-date="' + targetDate + '"]');
+    if (card) {
+      card.classList.add('expanded');
+      card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
   });
 
   // Calendar navigation
@@ -848,24 +887,30 @@
      APP ENTRY
      ================================================================== */
   async function enterApp() {
-    // Refresh the session token first (handle expired JWTs)
-    var freshSession = await Auth.refreshSession();
-    if (!freshSession) {
-      // Session is truly expired / invalid — force re-login
-      Toast.show('会话已过期，请重新登录');
-      document.getElementById('appPage').classList.add('hidden');
-      document.getElementById('authPage').classList.remove('hidden');
-      return;
-    }
+    // Try to refresh the session token
+    await Auth.refreshSession();
 
     // Fetch todos from Supabase
     var todos = [];
+    var fetchOk = true;
     try {
       todos = await Sync.fetchTodos();
     } catch (e) {
+      fetchOk = false;
       console.warn('Fetch failed, falling back to cache', e);
       loadLocalCache();
       todos = localCache.todos;
+    }
+
+    // Only force re-login if there's truly no session AND no cache
+    if (!fetchOk && todos.length === 0) {
+      var session = await Auth.getSession();
+      if (!session) {
+        Toast.show('会话已过期，请重新登录');
+        document.getElementById('appPage').classList.add('hidden');
+        document.getElementById('authPage').classList.remove('hidden');
+        return;
+      }
     }
 
     // Load lastActiveDate from localStorage (persisted across sessions)

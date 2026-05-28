@@ -103,6 +103,14 @@
 
       <!-- 历史视图 -->
       <section id="tabHistory" class="tab-panel hidden">
+        <!-- 历史工具栏 -->
+        <div class="history-toolbar">
+          <div class="history-mode-toggle">
+            <button id="modeCollapse" class="mode-btn active">折叠</button>
+            <button id="modeExpand" class="mode-btn">展开</button>
+          </div>
+          <input type="date" id="historyDatePicker" class="history-date-picker" title="跳转到指定日期">
+        </div>
         <div id="historyList" class="history-list"></div>
         <div id="historyEmpty" class="empty-state">
           <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#ccc" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">

@@ -446,6 +446,55 @@ input, button {
 /* ============================
    History View
    ============================ */
+.history-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+  gap: 10px;
+}
+
+.history-mode-toggle {
+  display: flex;
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.mode-btn {
+  padding: 6px 14px;
+  border: none;
+  background: none;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.mode-btn.active {
+  background: var(--primary);
+  color: #fff;
+}
+
+.history-date-picker {
+  flex: 1;
+  max-width: 140px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  background: var(--surface);
+  color: var(--text);
+  outline: none;
+}
+
+.history-date-picker:focus {
+  border-color: var(--primary);
+}
+
 .history-list {
   display: flex;
   flex-direction: column;
@@ -626,17 +675,13 @@ input, button {
 }
 
 .calendar-cell .dot {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
+  width: 20px;
+  height: 3px;
+  border-radius: 2px;
   position: absolute;
-  bottom: 2px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 10px;
-  font-weight: 700;
-  color: #fff;
+  bottom: 4px;
+  left: 50%;
+  transform: translateX(-50%);
 }
 
 .calendar-cell .dot.dot-blue { background: var(--primary); }
