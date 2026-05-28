@@ -88,6 +88,13 @@
       return result.data.session;
     },
 
+    async refreshSession() {
+      if (!supabase) return null;
+      var result = await supabase.auth.refreshSession();
+      if (result.error) return null;
+      return result.data.session;
+    },
+
     async login(email, password) {
       var result = await supabase.auth.signInWithPassword({ email: email, password: password });
       if (result.error) throw result.error;
@@ -823,6 +830,16 @@
      APP ENTRY
      ================================================================== */
   async function enterApp() {
+    // Refresh the session token first (handle expired JWTs)
+    var freshSession = await Auth.refreshSession();
+    if (!freshSession) {
+      // Session is truly expired / invalid — force re-login
+      Toast.show('会话已过期，请重新登录');
+      document.getElementById('appPage').classList.add('hidden');
+      document.getElementById('authPage').classList.remove('hidden');
+      return;
+    }
+
     // Fetch todos from Supabase
     var todos = [];
     try {
