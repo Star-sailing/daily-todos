@@ -397,6 +397,9 @@
     var emptyEl = document.getElementById('historyEmpty');
     var isExpanded = state.historyMode === 'expand';
 
+    // Set date picker default to today
+    document.getElementById('historyDatePicker').value = today;
+
     // Group past todos by date
     var dateGroups = new Map();
     for (var i = 0; i < state.allTodos.length; i++) {
@@ -920,20 +923,20 @@
     e.preventDefault();
     var email = document.getElementById('loginEmail').value.trim();
     var password = document.getElementById('loginPassword').value;
-    var remember = document.getElementById('rememberAccount').checked;
+    var rememberPwd = document.getElementById('rememberPassword').checked;
     var autoLogin = document.getElementById('autoLogin').checked;
     var errorEl = document.getElementById('loginError');
     errorEl.textContent = '';
     try {
       await Auth.login(email, password);
-      // Save preferences
-      if (remember || autoLogin) {
-        localStorage.setItem('todoapp_remembered_email', email);
-        localStorage.setItem('todoapp_auto_login', autoLogin ? '1' : '0');
+      // Always save email; optionally save password and auto-login preference
+      localStorage.setItem('todoapp_remembered_email', email);
+      if (rememberPwd) {
+        localStorage.setItem('todoapp_remembered_password', password);
       } else {
-        localStorage.removeItem('todoapp_remembered_email');
-        localStorage.removeItem('todoapp_auto_login');
+        localStorage.removeItem('todoapp_remembered_password');
       }
+      localStorage.setItem('todoapp_auto_login', autoLogin ? '1' : '0');
       await enterApp();
     } catch (err) {
       errorEl.textContent = err.message || '登录失败，请检查邮箱和密码';
@@ -1086,13 +1089,19 @@
       return;
     }
 
-    // Pre-fill remembered email
+    // Pre-fill remembered email and password
     var rememberedEmail = localStorage.getItem('todoapp_remembered_email');
+    var rememberedPassword = localStorage.getItem('todoapp_remembered_password');
     var autoLogin = localStorage.getItem('todoapp_auto_login') === '1';
     if (rememberedEmail) {
       document.getElementById('loginEmail').value = rememberedEmail;
-      document.getElementById('rememberAccount').checked = true;
-      document.getElementById('autoLogin').checked = autoLogin;
+    }
+    if (rememberedPassword) {
+      document.getElementById('loginPassword').value = rememberedPassword;
+      document.getElementById('rememberPassword').checked = true;
+    }
+    if (autoLogin) {
+      document.getElementById('autoLogin').checked = true;
     }
 
     // Check existing session
@@ -1102,8 +1111,7 @@
     } else {
       document.getElementById('authPage').classList.remove('hidden');
       document.getElementById('appPage').classList.add('hidden');
-      // If auto-login was enabled but session expired, still show login with pre-filled email
-      if (autoLogin && rememberedEmail) {
+      if (rememberedEmail && rememberedPassword) {
         document.getElementById('loginPassword').focus();
       }
     }
