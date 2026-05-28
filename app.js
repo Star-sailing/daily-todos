@@ -1,0 +1,934 @@
+(function() {
+  'use strict';
+
+  /* ==================================================================
+     CONFIGURATION — 在这里填入你的 Supabase 信息
+     ================================================================== */
+  const SUPABASE_URL = 'https://inpfdizaklxdlpawzcge.supabase.co';
+  const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlucGZkaXpha2x4ZGxwYXd6Y2dlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk5ODczMjEsImV4cCI6MjA5NTU2MzMyMX0.NZZRVEr94sBcBYPAdZVfek6JHL1_wQ5AeS8RB2X4j-g';
+
+  /* ==================================================================
+     UTILITY FUNCTIONS
+     ================================================================== */
+  function getToday() {
+    const d = new Date();
+    return d.getFullYear() + '-' +
+      String(d.getMonth() + 1).padStart(2, '0') + '-' +
+      String(d.getDate()).padStart(2, '0');
+  }
+
+  function formatDate(dateStr) {
+    const d = new Date(dateStr + 'T00:00:00');
+    const days = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
+    return d.getFullYear() + '年' + (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + days[d.getDay()];
+  }
+
+  function formatDateShort(dateStr) {
+    const d = new Date(dateStr + 'T00:00:00');
+    return (d.getMonth() + 1) + '月' + d.getDate() + '日';
+  }
+
+  function getWeekday(dateStr) {
+    const d = new Date(dateStr + 'T00:00:00');
+    const days = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
+    return days[d.getDay()];
+  }
+
+  function generateId() {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+      return crypto.randomUUID();
+    }
+    return 'id_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+  }
+
+  function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  /* ==================================================================
+     TOAST NOTIFICATIONS
+     ================================================================== */
+  const Toast = {
+    show(msg, duration) {
+      if (duration === undefined) duration = 2000;
+      const container = document.getElementById('toastContainer');
+      const el = document.createElement('div');
+      el.className = 'toast';
+      el.textContent = msg;
+      container.appendChild(el);
+      setTimeout(function() {
+        el.classList.add('removing');
+        setTimeout(function() { el.remove(); }, 200);
+      }, duration);
+    }
+  };
+
+  /* ==================================================================
+     SUPABASE CLIENT
+     ================================================================== */
+  let supabase = null;
+
+  function initSupabase() {
+    if (SUPABASE_URL === 'YOUR_SUPABASE_URL') {
+      return false;
+    }
+    supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    return true;
+  }
+
+  /* ==================================================================
+     AUTH MODULE
+     ================================================================== */
+  const Auth = {
+    async getSession() {
+      if (!supabase) return null;
+      var result = await supabase.auth.getSession();
+      return result.data.session;
+    },
+
+    async login(email, password) {
+      var result = await supabase.auth.signInWithPassword({ email: email, password: password });
+      if (result.error) throw result.error;
+      return result.data;
+    },
+
+    async register(email, password) {
+      var result = await supabase.auth.signUp({ email: email, password: password });
+      if (result.error) throw result.error;
+      return result.data;
+    },
+
+    async logout() {
+      await supabase.auth.signOut();
+    }
+  };
+
+  /* ==================================================================
+     DATA SYNC MODULE
+     ================================================================== */
+  const Sync = {
+    async fetchTodos() {
+      if (!supabase) return [];
+      var allTodos = [];
+      var from = 0;
+      var size = 1000;
+      while (true) {
+        var result = await supabase
+          .from('todos')
+          .select('*')
+          .order('date', { ascending: false })
+          .range(from, from + size - 1);
+        if (result.error) throw result.error;
+        var batch = result.data || [];
+        allTodos = allTodos.concat(batch);
+        if (batch.length < size) break;
+        from += size;
+      }
+      return allTodos.map(function(t) {
+        return {
+          id: t.id,
+          text: t.text,
+          done: t.done,
+          date: t.date,
+          createdAt: t.created_at,
+          carriedFrom: t.carried_from,
+          order: t.sort_order
+        };
+      });
+    },
+
+    async addTodo(todo) {
+      if (!supabase) return null;
+      var result = await supabase.from('todos').insert({
+        id: todo.id,
+        text: todo.text,
+        done: todo.done,
+        date: todo.date,
+        carried_from: todo.carriedFrom || null,
+        sort_order: todo.order || 0
+      }).select().single();
+      if (result.error) throw result.error;
+      return result.data;
+    },
+
+    async updateTodo(id, changes) {
+      if (!supabase) return null;
+      var payload = {};
+      if (changes.text !== undefined) payload.text = changes.text;
+      if (changes.done !== undefined) payload.done = changes.done;
+      if (changes.date !== undefined) payload.date = changes.date;
+      if (changes.carriedFrom !== undefined) payload.carried_from = changes.carriedFrom;
+      if (changes.order !== undefined) payload.sort_order = changes.order;
+      var result = await supabase.from('todos').update(payload).eq('id', id);
+      if (result.error) throw result.error;
+    },
+
+    async deleteTodo(id) {
+      if (!supabase) return;
+      var result = await supabase.from('todos').delete().eq('id', id);
+      if (result.error) throw result.error;
+    },
+
+    async batchAdd(todos) {
+      if (!supabase || todos.length === 0) return;
+      var payload = todos.map(function(t) {
+        return {
+          id: t.id,
+          text: t.text,
+          done: t.done,
+          date: t.date,
+          carried_from: t.carriedFrom || null,
+          sort_order: t.order || 0
+        };
+      });
+      var result = await supabase.from('todos').insert(payload);
+      if (result.error) throw result.error;
+    },
+
+    async batchUpdate(updates) {
+      if (!supabase || updates.length === 0) return;
+      for (var i = 0; i < updates.length; i++) {
+        var u = updates[i];
+        var payload = {};
+        if (u.done !== undefined) payload.done = u.done;
+        if (u.date !== undefined) payload.date = u.date;
+        if (u.carriedFrom !== undefined) payload.carried_from = u.carriedFrom;
+        if (u.order !== undefined) payload.sort_order = u.order;
+        await supabase.from('todos').update(payload).eq('id', u.id);
+      }
+    }
+  };
+
+  /* ==================================================================
+     LOCAL CACHE
+     ================================================================== */
+  var localCache = { todos: [], lastActiveDate: '' };
+
+  function saveLocalCache() {
+    try {
+      localStorage.setItem('todoapp_cache', JSON.stringify({
+        version: 1,
+        lastActiveDate: localCache.lastActiveDate,
+        todos: localCache.todos
+      }));
+    } catch (e) { /* quota exceeded — non-critical */ }
+  }
+
+  function loadLocalCache() {
+    try {
+      var raw = localStorage.getItem('todoapp_cache');
+      if (raw) {
+        var data = JSON.parse(raw);
+        localCache.lastActiveDate = data.lastActiveDate || '';
+        localCache.todos = data.todos || [];
+      }
+    } catch (e) { /* ignore */ }
+  }
+
+  /* ==================================================================
+     CARRY-OVER ENGINE
+     ================================================================== */
+  function getMaxOrder(todos, date) {
+    var max = -1;
+    for (var i = 0; i < todos.length; i++) {
+      if (todos[i].date === date && todos[i].order > max) {
+        max = todos[i].order;
+      }
+    }
+    return max;
+  }
+
+  async function runCarryOver(todos) {
+    var today = getToday();
+    if (localCache.lastActiveDate === today) return todos;
+
+    var undoneOlder = [];
+    for (var i = 0; i < todos.length; i++) {
+      if (todos[i].date < today && !todos[i].done) {
+        undoneOlder.push(todos[i]);
+      }
+    }
+
+    if (undoneOlder.length === 0) {
+      localCache.lastActiveDate = today;
+      saveLocalCache();
+      return todos;
+    }
+
+    // Collect normalized texts already on today to deduplicate
+    var todayTexts = new Set();
+    for (var j = 0; j < todos.length; j++) {
+      if (todos[j].date === today) {
+        todayTexts.add(todos[j].text.trim().toLowerCase());
+      }
+    }
+
+    var newTodos = [];
+    var maxOrder = getMaxOrder(todos, today);
+    var newOrder = maxOrder + 1;
+
+    for (var k = 0; k < undoneOlder.length; k++) {
+      var todo = undoneOlder[k];
+      var norm = todo.text.trim().toLowerCase();
+      if (todayTexts.has(norm)) continue;
+      var newTodo = {
+        id: generateId(),
+        text: todo.text,
+        done: false,
+        date: today,
+        createdAt: new Date().toISOString(),
+        carriedFrom: todo.date,
+        order: newOrder++
+      };
+      newTodos.push(newTodo);
+      todayTexts.add(norm);
+    }
+
+    if (newTodos.length > 0) {
+      try {
+        await Sync.batchAdd(newTodos);
+      } catch (e) {
+        console.warn('Carry-over sync failed, using local only', e);
+      }
+      todos = todos.concat(newTodos);
+    }
+
+    localCache.lastActiveDate = today;
+    saveLocalCache();
+    return todos;
+  }
+
+  /* ==================================================================
+     APP STATE
+     ================================================================== */
+  var state = {
+    allTodos: [],
+    currentTab: 'tabToday',
+    calendarMonth: new Date().getMonth(),
+    calendarYear: new Date().getFullYear(),
+    modalDate: null
+  };
+
+  /* ==================================================================
+     UI RENDERERS
+     ================================================================== */
+
+  function getTodosByDate(date) {
+    return state.allTodos
+      .filter(function(t) { return t.date === date; })
+      .sort(function(a, b) { return a.order - b.order; });
+  }
+
+  // -- Today View --
+  function renderToday() {
+    var today = getToday();
+    var todos = getTodosByDate(today);
+    var listEl = document.getElementById('todayList');
+    var emptyEl = document.getElementById('todayEmpty');
+
+    if (todos.length === 0) {
+      listEl.innerHTML = '';
+      emptyEl.classList.remove('hidden');
+      return;
+    }
+    emptyEl.classList.add('hidden');
+
+    // Sort: undone first, then done
+    var undone = todos.filter(function(t) { return !t.done; });
+    var done = todos.filter(function(t) { return t.done; });
+    var sorted = undone.concat(done);
+
+    listEl.innerHTML = sorted.map(function(t) {
+      return '<div class="todo-item" data-id="' + t.id + '">' +
+        '<div class="todo-check' + (t.done ? ' done' : '') + '" data-action="toggle"></div>' +
+        '<span class="todo-text' + (t.done ? ' done' : '') + '">' + escapeHtml(t.text) + '</span>' +
+        (t.carriedFrom ? '<span class="todo-badge">从' + formatDateShort(t.carriedFrom) + '顺延</span>' : '') +
+        '<button class="todo-delete" data-action="delete" aria-label="删除">' +
+          '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+        '</button>' +
+      '</div>';
+    }).join('');
+  }
+
+  // -- History View --
+  function renderHistory() {
+    var today = getToday();
+    var container = document.getElementById('historyList');
+    var emptyEl = document.getElementById('historyEmpty');
+
+    // Group past todos by date
+    var dateGroups = new Map();
+    for (var i = 0; i < state.allTodos.length; i++) {
+      var t = state.allTodos[i];
+      if (t.date >= today) continue;
+      if (!dateGroups.has(t.date)) dateGroups.set(t.date, []);
+      dateGroups.get(t.date).push(t);
+    }
+
+    var dates = Array.from(dateGroups.keys()).sort().reverse();
+
+    if (dates.length === 0) {
+      container.innerHTML = '';
+      emptyEl.classList.remove('hidden');
+      return;
+    }
+    emptyEl.classList.add('hidden');
+
+    container.innerHTML = dates.map(function(date) {
+      var todos = dateGroups.get(date);
+      var doneCount = todos.filter(function(t) { return t.done; }).length;
+      var total = todos.length;
+      var pct = Math.round((doneCount / total) * 100);
+
+      return '<div class="history-card" data-date="' + date + '">' +
+        '<div class="history-card-header">' +
+          '<div class="date-info">' +
+            '<div class="date-label">' + formatDateShort(date) + '</div>' +
+            '<div class="date-weekday">' + getWeekday(date) + '</div>' +
+          '</div>' +
+          '<div class="progress-info">' +
+            '<div>' + doneCount + '/' + total + ' 完成</div>' +
+            '<div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:' + pct + '%"></div></div>' +
+          '</div>' +
+          '<svg class="chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>' +
+        '</div>' +
+        '<div class="history-card-body">' +
+          todos.map(function(t) {
+            return '<div class="todo-row">' +
+              '<div class="indicator ' + (t.done ? 'done' : 'undone') + '"></div>' +
+              '<span class="txt' + (t.done ? ' was-done' : '') + '">' + escapeHtml(t.text) + '</span>' +
+              '</div>';
+          }).join('') +
+        '</div>' +
+      '</div>';
+    }).join('');
+  }
+
+  // -- Calendar View --
+  function renderCalendar() {
+    var year = state.calendarYear;
+    var month = state.calendarMonth;
+
+    document.getElementById('calMonthLabel').textContent = year + '年' + (month + 1) + '月';
+
+    var dateMap = getDatesWithTodo();
+    var today = getToday();
+
+    var grid = document.getElementById('calendarGrid');
+    var firstDay = new Date(year, month, 1).getDay();
+    var daysInMonth = new Date(year, month + 1, 0).getDate();
+    var prevMonthDays = new Date(year, month, 0).getDate();
+
+    var cells = [];
+
+    // Previous month fillers
+    for (var i = firstDay - 1; i >= 0; i--) {
+      var d = prevMonthDays - i;
+      var m = month - 1;
+      var y = year;
+      if (m < 0) { m = 11; y--; }
+      var dateStr = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+      cells.push({ day: d, dateStr: dateStr, otherMonth: true });
+    }
+
+    // Current month
+    for (var d = 1; d <= daysInMonth; d++) {
+      var dateStr = year + '-' + String(month + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+      cells.push({ day: d, dateStr: dateStr, otherMonth: false });
+    }
+
+    // Next month fillers
+    var remaining = 7 - (cells.length % 7);
+    if (remaining < 7) {
+      for (var d = 1; d <= remaining; d++) {
+        var m = month + 1;
+        var y = year;
+        if (m > 11) { m = 0; y++; }
+        var dateStr = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+        cells.push({ day: d, dateStr: dateStr, otherMonth: true });
+      }
+    }
+
+    grid.innerHTML = cells.map(function(cell) {
+      var cls = 'calendar-cell';
+      if (cell.otherMonth) cls += ' other-month';
+      if (cell.dateStr === today) cls += ' today';
+
+      var dotHtml = '';
+      var info = dateMap.get(cell.dateStr);
+      if (info) {
+        if (cell.dateStr > today) {
+          dotHtml = '<span class="dot dot-blue"></span>';
+        } else if (info.done === info.total) {
+          dotHtml = '<span class="dot dot-green"></span>';
+        } else {
+          dotHtml = '<span class="dot dot-orange"></span>';
+        }
+      }
+
+      return '<div class="' + cls + '" data-date="' + cell.dateStr + '">' +
+        cell.day + dotHtml +
+      '</div>';
+    }).join('');
+  }
+
+  // -- Modal --
+  function openModal(dateStr) {
+    state.modalDate = dateStr;
+    var today = getToday();
+    var isEditable = dateStr >= today;
+
+    document.getElementById('modalTitle').textContent = formatDateShort(dateStr) + ' ' + getWeekday(dateStr);
+
+    var addBar = document.getElementById('modalAddBar');
+    if (isEditable) {
+      addBar.classList.remove('hidden');
+    } else {
+      addBar.classList.add('hidden');
+    }
+
+    renderModalList();
+    document.getElementById('modalOverlay').classList.remove('hidden');
+  }
+
+  function closeModal() {
+    document.getElementById('modalOverlay').classList.add('hidden');
+    state.modalDate = null;
+  }
+
+  function renderModalList() {
+    if (!state.modalDate) return;
+    var todos = getTodosByDate(state.modalDate);
+    var listEl = document.getElementById('modalList');
+    var emptyEl = document.getElementById('modalEmpty');
+
+    if (todos.length === 0) {
+      listEl.innerHTML = '';
+      emptyEl.classList.remove('hidden');
+      return;
+    }
+    emptyEl.classList.add('hidden');
+
+    var today = getToday();
+    var isEditable = state.modalDate >= today;
+    var undone = todos.filter(function(t) { return !t.done; });
+    var done = todos.filter(function(t) { return t.done; });
+    var sorted = undone.concat(done);
+
+    listEl.innerHTML = sorted.map(function(t) {
+      var html = '<div class="todo-item" data-id="' + t.id + '">';
+      if (isEditable) {
+        html += '<div class="todo-check' + (t.done ? ' done' : '') + '" data-action="toggle"></div>';
+        html += '<span class="todo-text' + (t.done ? ' done' : '') + '">' + escapeHtml(t.text) + '</span>';
+        html += '<button class="todo-delete" data-action="delete" aria-label="删除">' +
+          '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+        '</button>';
+      } else {
+        html += '<div class="indicator ' + (t.done ? 'done' : 'undone') + '" style="width:10px;height:10px;border-radius:50%;flex-shrink:0;background:' + (t.done ? 'var(--green)' : 'var(--orange)') + '"></div>';
+        html += '<span class="todo-text' + (t.done ? ' done' : '') + '">' + escapeHtml(t.text) + '</span>';
+      }
+      html += '</div>';
+      return html;
+    }).join('');
+  }
+
+  // -- Shared render helpers --
+  function renderCurrentView() {
+    if (state.currentTab === 'tabToday') renderToday();
+    else if (state.currentTab === 'tabHistory') renderHistory();
+    else if (state.currentTab === 'tabCalendar') renderCalendar();
+  }
+
+  function updateHeaderDate() {
+    document.getElementById('headerDate').textContent = formatDate(getToday());
+  }
+
+  function getDatesWithTodo() {
+    var map = new Map();
+    for (var i = 0; i < state.allTodos.length; i++) {
+      var t = state.allTodos[i];
+      if (!map.has(t.date)) map.set(t.date, { total: 0, done: 0 });
+      var entry = map.get(t.date);
+      entry.total++;
+      if (t.done) entry.done++;
+    }
+    return map;
+  }
+
+  /* ==================================================================
+     EVENT HANDLERS
+     ================================================================== */
+
+  // Add todo
+  async function handleAdd(text, dateStr) {
+    dateStr = dateStr || getToday();
+    var all = state.allTodos.filter(function(t) { return t.date === dateStr; });
+    var maxOrder = all.reduce(function(m, t) { return Math.max(m, t.order); }, -1);
+    var todo = {
+      id: generateId(),
+      text: text,
+      done: false,
+      date: dateStr,
+      createdAt: new Date().toISOString(),
+      carriedFrom: null,
+      order: maxOrder + 1
+    };
+    try {
+      await Sync.addTodo(todo);
+    } catch (e) {
+      console.warn('Sync add failed, using local', e);
+    }
+    state.allTodos.push(todo);
+    renderCurrentView();
+    if (state.modalDate === dateStr) renderModalList();
+    saveLocalCache();
+  }
+
+  // Toggle todo
+  async function handleToggle(id) {
+    var idx = -1;
+    for (var i = 0; i < state.allTodos.length; i++) {
+      if (state.allTodos[i].id === id) { idx = i; break; }
+    }
+    if (idx === -1) return;
+    var todo = state.allTodos[idx];
+    todo.done = !todo.done;
+    try {
+      await Sync.updateTodo(id, { done: todo.done });
+    } catch (e) {
+      console.warn('Sync toggle failed', e);
+    }
+    renderCurrentView();
+    if (state.modalDate) renderModalList();
+    saveLocalCache();
+  }
+
+  // Delete todo
+  async function handleDelete(id) {
+    var idx = -1;
+    for (var i = 0; i < state.allTodos.length; i++) {
+      if (state.allTodos[i].id === id) { idx = i; break; }
+    }
+    if (idx === -1) return;
+    state.allTodos.splice(idx, 1);
+    try {
+      await Sync.deleteTodo(id);
+    } catch (e) {
+      console.warn('Sync delete failed', e);
+    }
+    renderCurrentView();
+    if (state.modalDate) renderModalList();
+    saveLocalCache();
+    Toast.show('已删除');
+  }
+
+  // Switch tab
+  function switchTab(tabName) {
+    state.currentTab = tabName;
+
+    // Update tab button styles
+    var buttons = document.querySelectorAll('.tab-btn');
+    for (var i = 0; i < buttons.length; i++) {
+      buttons[i].classList.remove('active');
+      if (buttons[i].dataset.tab === tabName) buttons[i].classList.add('active');
+    }
+
+    // Show/hide panels
+    document.getElementById('tabToday').classList.toggle('hidden', tabName !== 'tabToday');
+    document.getElementById('tabHistory').classList.toggle('hidden', tabName !== 'tabHistory');
+    document.getElementById('tabCalendar').classList.toggle('hidden', tabName !== 'tabCalendar');
+
+    renderCurrentView();
+  }
+
+  /* ==================================================================
+     EVENT DELEGATION
+     ================================================================== */
+
+  // Today list clicks
+  document.getElementById('todayList').addEventListener('click', function(e) {
+    var item = e.target.closest('.todo-item');
+    if (!item) return;
+    var id = item.dataset.id;
+    var action = e.target.closest('[data-action]');
+    if (!action) return;
+    if (action.dataset.action === 'toggle') handleToggle(id);
+    else if (action.dataset.action === 'delete') handleDelete(id);
+  });
+
+  // Add todo button
+  document.getElementById('addBtn').addEventListener('click', function() {
+    var input = document.getElementById('todoInput');
+    var text = input.value.trim();
+    if (!text) return;
+    input.value = '';
+    handleAdd(text, getToday());
+  });
+
+  document.getElementById('todoInput').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') {
+      var text = this.value.trim();
+      if (!text) return;
+      this.value = '';
+      handleAdd(text, getToday());
+    }
+  });
+
+  // History card expand/collapse
+  document.getElementById('historyList').addEventListener('click', function(e) {
+    var header = e.target.closest('.history-card-header');
+    if (!header) return;
+    var card = header.parentElement;
+    card.classList.toggle('expanded');
+  });
+
+  // Calendar navigation
+  document.getElementById('calPrev').addEventListener('click', function() {
+    state.calendarMonth--;
+    if (state.calendarMonth < 0) { state.calendarMonth = 11; state.calendarYear--; }
+    renderCalendar();
+  });
+
+  document.getElementById('calNext').addEventListener('click', function() {
+    state.calendarMonth++;
+    if (state.calendarMonth > 11) { state.calendarMonth = 0; state.calendarYear++; }
+    renderCalendar();
+  });
+
+  // Calendar date click
+  document.getElementById('calendarGrid').addEventListener('click', function(e) {
+    var cell = e.target.closest('.calendar-cell');
+    if (!cell || cell.classList.contains('other-month')) return;
+    openModal(cell.dataset.date);
+  });
+
+  // Tab bar clicks
+  document.querySelector('.tab-bar').addEventListener('click', function(e) {
+    var btn = e.target.closest('.tab-btn');
+    if (!btn) return;
+    switchTab(btn.dataset.tab);
+  });
+
+  // Modal close
+  document.getElementById('modalClose').addEventListener('click', closeModal);
+  document.getElementById('modalOverlay').addEventListener('click', function(e) {
+    if (e.target === this) closeModal();
+  });
+
+  // Modal add
+  document.getElementById('modalAddBtn').addEventListener('click', function() {
+    var input = document.getElementById('modalInput');
+    var text = input.value.trim();
+    if (!text || !state.modalDate) return;
+    input.value = '';
+    handleAdd(text, state.modalDate);
+  });
+
+  document.getElementById('modalInput').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') {
+      var text = this.value.trim();
+      if (!text || !state.modalDate) return;
+      this.value = '';
+      handleAdd(text, state.modalDate);
+    }
+  });
+
+  // Modal list clicks
+  document.getElementById('modalList').addEventListener('click', function(e) {
+    var item = e.target.closest('.todo-item');
+    if (!item) return;
+    var id = item.dataset.id;
+    var action = e.target.closest('[data-action]');
+    if (!action) return;
+    if (action.dataset.action === 'toggle') handleToggle(id);
+    else if (action.dataset.action === 'delete') handleDelete(id);
+  });
+
+  // Logout
+  document.getElementById('logoutBtn').addEventListener('click', async function() {
+    await Auth.logout();
+    document.getElementById('appPage').classList.add('hidden');
+    document.getElementById('authPage').classList.remove('hidden');
+    state.allTodos = [];
+    localCache = { todos: [], lastActiveDate: '' };
+  });
+
+  // Auth switch
+  var isLoginMode = true;
+  document.getElementById('switchAuthBtn').addEventListener('click', function() {
+    isLoginMode = !isLoginMode;
+    document.getElementById('loginForm').classList.toggle('hidden', !isLoginMode);
+    document.getElementById('registerForm').classList.toggle('hidden', isLoginMode);
+    document.getElementById('switchText').textContent = isLoginMode ? '还没有账号？' : '已有账号？';
+    document.getElementById('switchAuthBtn').textContent = isLoginMode ? '去注册' : '去登录';
+    document.getElementById('loginError').textContent = '';
+    document.getElementById('registerError').textContent = '';
+  });
+
+  // Login form submit
+  document.getElementById('loginForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    var email = document.getElementById('loginEmail').value.trim();
+    var password = document.getElementById('loginPassword').value;
+    var errorEl = document.getElementById('loginError');
+    errorEl.textContent = '';
+    try {
+      await Auth.login(email, password);
+      await enterApp();
+    } catch (err) {
+      errorEl.textContent = err.message || '登录失败，请检查邮箱和密码';
+    }
+  });
+
+  // Register form submit
+  document.getElementById('registerForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    var email = document.getElementById('registerEmail').value.trim();
+    var password = document.getElementById('registerPassword').value;
+    var confirm = document.getElementById('registerConfirm').value;
+    var errorEl = document.getElementById('registerError');
+    errorEl.textContent = '';
+
+    if (password !== confirm) {
+      errorEl.textContent = '两次密码不一致';
+      return;
+    }
+    if (password.length < 6) {
+      errorEl.textContent = '密码至少需要6位';
+      return;
+    }
+    try {
+      await Auth.register(email, password);
+      // Supabase signUp may return a session immediately or require email verification
+      try {
+        await Auth.login(email, password);
+        await enterApp();
+      } catch (loginErr) {
+        Toast.show('注册成功！请检查邮箱并点击确认链接后登录', 4000);
+        isLoginMode = true;
+        document.getElementById('loginForm').classList.remove('hidden');
+        document.getElementById('registerForm').classList.add('hidden');
+        document.getElementById('switchText').textContent = '还没有账号？';
+        document.getElementById('switchAuthBtn').textContent = '去注册';
+        document.getElementById('loginEmail').value = email;
+      }
+    } catch (err) {
+      errorEl.textContent = err.message || '注册失败，请重试';
+    }
+  });
+
+  /* ==================================================================
+     APP ENTRY
+     ================================================================== */
+  async function enterApp() {
+    // Fetch todos from Supabase
+    var todos = [];
+    try {
+      todos = await Sync.fetchTodos();
+    } catch (e) {
+      console.warn('Fetch failed, falling back to cache', e);
+      loadLocalCache();
+      todos = localCache.todos;
+    }
+
+    // Load lastActiveDate from localStorage (persisted across sessions)
+    loadLocalCache();
+
+    state.allTodos = todos;
+    todos = await runCarryOver(todos);
+    state.allTodos = todos;
+
+    // Update local cache
+    localCache.todos = todos;
+    saveLocalCache();
+
+    // Show app, hide auth
+    document.getElementById('authPage').classList.add('hidden');
+    document.getElementById('appPage').classList.remove('hidden');
+
+    updateHeaderDate();
+    switchTab('tabToday');
+
+    // Start midnight checker
+    startMidnightChecker();
+  }
+
+  /* ==================================================================
+     MIDNIGHT CHECKER
+     ================================================================== */
+  var midnightTimer = null;
+  var lastKnownDate = getToday();
+
+  function startMidnightChecker() {
+    if (midnightTimer) clearInterval(midnightTimer);
+    midnightTimer = setInterval(async function() {
+      var today = getToday();
+      if (today !== lastKnownDate) {
+        lastKnownDate = today;
+        updateHeaderDate();
+        // Fetch fresh data and run carry-over
+        try {
+          state.allTodos = await Sync.fetchTodos();
+        } catch (e) { /* offline */ }
+        state.allTodos = await runCarryOver(state.allTodos);
+        localCache.todos = state.allTodos;
+        saveLocalCache();
+        renderCurrentView();
+      }
+    }, 60000);
+  }
+
+  /* ==================================================================
+     PWA / SERVICE WORKER
+     ================================================================== */
+  function registerSW() {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js')
+        .then(function() { console.log('SW registered'); })
+        .catch(function() { /* non-critical */ });
+    }
+
+    // Install prompt
+    var deferredPrompt = null;
+    window.addEventListener('beforeinstallprompt', function(e) {
+      e.preventDefault();
+      deferredPrompt = e;
+    });
+  }
+
+  /* ==================================================================
+     INIT
+     ================================================================== */
+  async function init() {
+    registerSW();
+
+    if (!initSupabase()) {
+      // No Supabase configured — show a message
+      document.getElementById('loginForm').innerHTML =
+        '<p style="text-align:center;color:var(--danger);font-size:14px;">请先在 app.js 中配置 SUPABASE_URL 和 SUPABASE_KEY</p>' +
+        '<p style="text-align:center;font-size:13px;color:var(--text-secondary);">打开 app.js，将顶部的 YOUR_SUPABASE_URL 和 YOUR_SUPABASE_ANON_KEY 替换为你的 Supabase 项目信息</p>';
+      return;
+    }
+
+    // Check existing session
+    var session = await Auth.getSession();
+    if (session) {
+      await enterApp();
+    } else {
+      document.getElementById('authPage').classList.remove('hidden');
+      document.getElementById('appPage').classList.add('hidden');
+    }
+
+    // Listen for auth state changes
+    supabase.auth.onAuthStateChange(async function(event, _session) {
+      if (event === 'SIGNED_IN' && document.getElementById('appPage').classList.contains('hidden')) {
+        await enterApp();
+      }
+    });
+  }
+
+  init();
+
+})();

@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mv \"d:\\\\Desktop\\\\To Do List\\\\index.html\" \"d:\\\\Desktop\\\\To Do List\\\\styles.css\" \"d:\\\\Desktop\\\\To Do List\\\\app.js\" \"d:\\\\Desktop\\\\To Do List\\\\manifest.json\" \"d:\\\\Desktop\\\\To Do List\\\\sw.js\" \"E:\\\\DIY APP\\\\\"; rm -rf \"d:\\\\Desktop\\\\To Do List\")"
+    ],
+    "additionalDirectories": [
+      "E:\\"
+    ]
+  }
+}
