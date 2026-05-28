@@ -148,7 +148,9 @@
           date: t.date,
           createdAt: t.created_at,
           carriedFrom: t.carried_from,
-          order: t.sort_order
+          order: t.sort_order,
+          pinned: t.pinned || false,
+          highlighted: t.highlighted || false
         };
       });
     },
@@ -161,7 +163,9 @@
         done: todo.done,
         date: todo.date,
         carried_from: todo.carriedFrom || null,
-        sort_order: todo.order || 0
+        sort_order: todo.order || 0,
+        pinned: todo.pinned || false,
+        highlighted: todo.highlighted || false
       }).select().single();
       if (result.error) throw result.error;
       return result.data;
@@ -175,6 +179,8 @@
       if (changes.date !== undefined) payload.date = changes.date;
       if (changes.carriedFrom !== undefined) payload.carried_from = changes.carriedFrom;
       if (changes.order !== undefined) payload.sort_order = changes.order;
+      if (changes.pinned !== undefined) payload.pinned = changes.pinned;
+      if (changes.highlighted !== undefined) payload.highlighted = changes.highlighted;
       var result = await supabase.from('todos').update(payload).eq('id', id);
       if (result.error) throw result.error;
     },
@@ -194,7 +200,9 @@
           done: t.done,
           date: t.date,
           carried_from: t.carriedFrom || null,
-          sort_order: t.order || 0
+          sort_order: t.order || 0,
+          pinned: t.pinned || false,
+          highlighted: t.highlighted || false
         };
       });
       var result = await supabase.from('todos').insert(payload);
@@ -322,6 +330,8 @@
     currentTab: 'tabToday',
     calendarMonth: new Date().getMonth(),
     calendarYear: new Date().getFullYear(),
+    statsMonth: new Date().getMonth(),
+    statsYear: new Date().getFullYear(),
     modalDate: null,
     historyMode: 'collapse' // 'collapse' or 'expand'
   };
@@ -350,16 +360,29 @@
     }
     emptyEl.classList.add('hidden');
 
-    // Sort: undone first, then done
-    var undone = todos.filter(function(t) { return !t.done; });
-    var done = todos.filter(function(t) { return t.done; });
-    var sorted = undone.concat(done);
+    // Sort: pinned first, then undone, then done
+    var pinned = todos.filter(function(t) { return t.pinned; });
+    var unpinned = todos.filter(function(t) { return !t.pinned; });
+    var pinnedUndone = pinned.filter(function(t) { return !t.done; });
+    var pinnedDone = pinned.filter(function(t) { return t.done; });
+    var unpinnedUndone = unpinned.filter(function(t) { return !t.done; });
+    var unpinnedDone = unpinned.filter(function(t) { return t.done; });
+    var sorted = pinnedUndone.concat(pinnedDone).concat(unpinnedUndone).concat(unpinnedDone);
 
     listEl.innerHTML = sorted.map(function(t) {
-      return '<div class="todo-item" data-id="' + t.id + '">' +
+      var classes = 'todo-item';
+      if (t.pinned) classes += ' pinned';
+      if (t.highlighted) classes += ' highlighted';
+      return '<div class="' + classes + '" data-id="' + t.id + '">' +
         '<div class="todo-check' + (t.done ? ' done' : '') + '" data-action="toggle"></div>' +
         '<span class="todo-text' + (t.done ? ' done' : '') + '">' + escapeHtml(t.text) + '</span>' +
         (t.carriedFrom ? '<span class="todo-badge">从' + formatDateShort(t.carriedFrom) + '顺延</span>' : '') +
+        '<button class="todo-action-btn" data-action="pin" title="' + (t.pinned ? '取消置顶' : '置顶') + '">' +
+          '<svg width="14" height="14" viewBox="0 0 24 24" fill="' + (t.pinned ? '#4A6CF7' : 'none') + '" stroke="' + (t.pinned ? '#4A6CF7' : '#9CA3AF') + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 00-1.11-1.79l-1.78-.9A2 2 0 0115 10.76V6h1a2 2 0 000-4H8a2 2 0 000 4h1v4.76a2 2 0 01-1.11 1.79l-1.78.9A2 2 0 005 15.24Z"/></svg>' +
+        '</button>' +
+        '<button class="todo-action-btn" data-action="highlight" title="' + (t.highlighted ? '取消高亮' : '高亮') + '">' +
+          '<svg width="14" height="14" viewBox="0 0 24 24" fill="' + (t.highlighted ? '#F59E0B' : 'none') + '" stroke="' + (t.highlighted ? '#F59E0B' : '#9CA3AF') + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>' +
+        '</button>' +
         '<button class="todo-delete" data-action="delete" aria-label="删除">' +
           '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
         '</button>' +
@@ -487,12 +510,16 @@
       }
 
       return '<div class="' + cls + '" data-date="' + cell.dateStr + '">' +
-        cell.day + dotHtml +
+        '<span class="cal-day-num">' + cell.day + '</span>' + dotHtml +
       '</div>';
     }).join('');
 
-    // Calculate and render monthly stats
-    var monthStr = year + '-' + String(month + 1).padStart(2, '0');
+    // Render stats for the independent stats month
+    renderStats();
+  }
+
+  function renderStats() {
+    var monthStr = state.statsYear + '-' + String(state.statsMonth + 1).padStart(2, '0');
     var totalInMonth = 0, doneInMonth = 0;
     for (var i = 0; i < state.allTodos.length; i++) {
       if (state.allTodos[i].date.substring(0, 7) === monthStr) {
@@ -501,7 +528,7 @@
       }
     }
 
-    document.getElementById('statsMonthLabel').textContent = (month + 1) + '月统计';
+    document.getElementById('statsMonthLabel').textContent = state.statsYear + '年' + (state.statsMonth + 1) + '月';
     document.getElementById('statTotal').textContent = totalInMonth;
     document.getElementById('statDone').textContent = doneInMonth;
     document.getElementById('statUndone').textContent = totalInMonth - doneInMonth;
@@ -547,21 +574,37 @@
 
     var today = getToday();
     var isEditable = state.modalDate >= today;
-    var undone = todos.filter(function(t) { return !t.done; });
-    var done = todos.filter(function(t) { return t.done; });
-    var sorted = undone.concat(done);
+    // Sort: pinned first, then undone, then done
+    var pinned = todos.filter(function(t) { return t.pinned; });
+    var unpinned = todos.filter(function(t) { return !t.pinned; });
+    var pinnedUndone = pinned.filter(function(t) { return !t.done; });
+    var pinnedDone = pinned.filter(function(t) { return t.done; });
+    var unpinnedUndone = unpinned.filter(function(t) { return !t.done; });
+    var unpinnedDone = unpinned.filter(function(t) { return t.done; });
+    var sorted = pinnedUndone.concat(pinnedDone).concat(unpinnedUndone).concat(unpinnedDone);
 
     listEl.innerHTML = sorted.map(function(t) {
-      var html = '<div class="todo-item" data-id="' + t.id + '">';
+      var cls = 'todo-item';
+      if (t.pinned) cls += ' pinned';
+      if (t.highlighted) cls += ' highlighted';
+      var html = '<div class="' + cls + '" data-id="' + t.id + '">';
       if (isEditable) {
         html += '<div class="todo-check' + (t.done ? ' done' : '') + '" data-action="toggle"></div>';
         html += '<span class="todo-text' + (t.done ? ' done' : '') + '">' + escapeHtml(t.text) + '</span>';
-        html += '<button class="todo-delete" data-action="delete" aria-label="删除">' +
+        html += '<button class="todo-action-btn" data-action="pin" title="' + (t.pinned ? '取消置顶' : '置顶') + '">' +
+          '<svg width="14" height="14" viewBox="0 0 24 24" fill="' + (t.pinned ? '#4A6CF7' : 'none') + '" stroke="' + (t.pinned ? '#4A6CF7' : '#9CA3AF') + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 00-1.11-1.79l-1.78-.9A2 2 0 0115 10.76V6h1a2 2 0 000-4H8a2 2 0 000 4h1v4.76a2 2 0 01-1.11 1.79l-1.78.9A2 2 0 005 15.24Z"/></svg>' +
+        '</button>' +
+        '<button class="todo-action-btn" data-action="highlight" title="' + (t.highlighted ? '取消高亮' : '高亮') + '">' +
+          '<svg width="14" height="14" viewBox="0 0 24 24" fill="' + (t.highlighted ? '#F59E0B' : 'none') + '" stroke="' + (t.highlighted ? '#F59E0B' : '#9CA3AF') + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>' +
+        '</button>' +
+        '<button class="todo-delete" data-action="delete" aria-label="删除">' +
           '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
         '</button>';
       } else {
         html += '<div class="indicator ' + (t.done ? 'done' : 'undone') + '" style="width:10px;height:10px;border-radius:50%;flex-shrink:0;background:' + (t.done ? 'var(--green)' : 'var(--orange)') + '"></div>';
         html += '<span class="todo-text' + (t.done ? ' done' : '') + '">' + escapeHtml(t.text) + '</span>';
+        if (t.pinned) html += '<span class="todo-badge">已置顶</span>';
+        if (t.highlighted) html += '<span class="todo-badge">已高亮</span>';
       }
       html += '</div>';
       return html;
@@ -607,7 +650,9 @@
       date: dateStr,
       createdAt: new Date().toISOString(),
       carriedFrom: null,
-      order: maxOrder + 1
+      order: maxOrder + 1,
+      pinned: false,
+      highlighted: false
     };
     try {
       await Sync.addTodo(todo);
@@ -658,6 +703,28 @@
     Toast.show('已删除');
   }
 
+  // Pin toggle
+  async function handlePin(id) {
+    var todo = state.allTodos.find(function(t) { return t.id === id; });
+    if (!todo) return;
+    todo.pinned = !todo.pinned;
+    try { await Sync.updateTodo(id, { pinned: todo.pinned }); } catch (e) {}
+    renderCurrentView();
+    if (state.modalDate) renderModalList();
+    saveLocalCache();
+  }
+
+  // Highlight toggle
+  async function handleHighlight(id) {
+    var todo = state.allTodos.find(function(t) { return t.id === id; });
+    if (!todo) return;
+    todo.highlighted = !todo.highlighted;
+    try { await Sync.updateTodo(id, { highlighted: todo.highlighted }); } catch (e) {}
+    renderCurrentView();
+    if (state.modalDate) renderModalList();
+    saveLocalCache();
+  }
+
   // Switch tab
   function switchTab(tabName) {
     state.currentTab = tabName;
@@ -690,6 +757,8 @@
     if (!action) return;
     if (action.dataset.action === 'toggle') handleToggle(id);
     else if (action.dataset.action === 'delete') handleDelete(id);
+    else if (action.dataset.action === 'pin') handlePin(id);
+    else if (action.dataset.action === 'highlight') handleHighlight(id);
   });
 
   // Add todo button
@@ -761,6 +830,19 @@
     renderCalendar();
   });
 
+  // Stats navigation (independent from calendar)
+  document.getElementById('statsPrev').addEventListener('click', function() {
+    state.statsMonth--;
+    if (state.statsMonth < 0) { state.statsMonth = 11; state.statsYear--; }
+    renderStats();
+  });
+
+  document.getElementById('statsNext').addEventListener('click', function() {
+    state.statsMonth++;
+    if (state.statsMonth > 11) { state.statsMonth = 0; state.statsYear++; }
+    renderStats();
+  });
+
   // Calendar date click
   document.getElementById('calendarGrid').addEventListener('click', function(e) {
     var cell = e.target.closest('.calendar-cell');
@@ -808,6 +890,8 @@
     if (!action) return;
     if (action.dataset.action === 'toggle') handleToggle(id);
     else if (action.dataset.action === 'delete') handleDelete(id);
+    else if (action.dataset.action === 'pin') handlePin(id);
+    else if (action.dataset.action === 'highlight') handleHighlight(id);
   });
 
   // Logout
@@ -836,10 +920,20 @@
     e.preventDefault();
     var email = document.getElementById('loginEmail').value.trim();
     var password = document.getElementById('loginPassword').value;
+    var remember = document.getElementById('rememberAccount').checked;
+    var autoLogin = document.getElementById('autoLogin').checked;
     var errorEl = document.getElementById('loginError');
     errorEl.textContent = '';
     try {
       await Auth.login(email, password);
+      // Save preferences
+      if (remember || autoLogin) {
+        localStorage.setItem('todoapp_remembered_email', email);
+        localStorage.setItem('todoapp_auto_login', autoLogin ? '1' : '0');
+      } else {
+        localStorage.removeItem('todoapp_remembered_email');
+        localStorage.removeItem('todoapp_auto_login');
+      }
       await enterApp();
     } catch (err) {
       errorEl.textContent = err.message || '登录失败，请检查邮箱和密码';
@@ -992,6 +1086,15 @@
       return;
     }
 
+    // Pre-fill remembered email
+    var rememberedEmail = localStorage.getItem('todoapp_remembered_email');
+    var autoLogin = localStorage.getItem('todoapp_auto_login') === '1';
+    if (rememberedEmail) {
+      document.getElementById('loginEmail').value = rememberedEmail;
+      document.getElementById('rememberAccount').checked = true;
+      document.getElementById('autoLogin').checked = autoLogin;
+    }
+
     // Check existing session
     var session = await Auth.getSession();
     if (session) {
@@ -999,6 +1102,10 @@
     } else {
       document.getElementById('authPage').classList.remove('hidden');
       document.getElementById('appPage').classList.add('hidden');
+      // If auto-login was enabled but session expired, still show login with pre-filled email
+      if (autoLogin && rememberedEmail) {
+        document.getElementById('loginPassword').focus();
+      }
     }
 
     // Listen for auth state changes

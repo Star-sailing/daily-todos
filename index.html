@@ -35,6 +35,14 @@
           <label for="loginPassword">密码</label>
           <input type="password" id="loginPassword" placeholder="至少6位密码" required autocomplete="current-password" minlength="6">
         </div>
+        <div class="remember-row">
+          <label class="checkbox-label">
+            <input type="checkbox" id="rememberAccount"> 记住账号
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" id="autoLogin"> 自动登录
+          </label>
+        </div>
         <p id="loginError" class="auth-error"></p>
         <button type="submit" class="btn btn-primary btn-full">登 录</button>
       </form>
@@ -143,7 +151,15 @@
         </div>
         <!-- 月度统计 -->
         <div id="calendarStats" class="calendar-stats">
-          <h3 id="statsMonthLabel">本月统计</h3>
+          <div class="stats-header">
+            <button id="statsPrev" class="btn-icon-sm" aria-label="上一月">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+            </button>
+            <h3 id="statsMonthLabel">本月统计</h3>
+            <button id="statsNext" class="btn-icon-sm" aria-label="下一月">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+            </button>
+          </div>
           <div class="stats-row">
             <div class="stat-card stat-total">
               <div class="stat-num" id="statTotal">0</div>
