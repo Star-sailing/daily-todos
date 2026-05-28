@@ -74,7 +74,7 @@
     if (SUPABASE_URL === 'YOUR_SUPABASE_URL') {
       return false;
     }
-    supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, { realtime: { enabled: false } });
     return true;
   }
 
