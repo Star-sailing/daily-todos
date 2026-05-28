@@ -626,11 +626,11 @@ input, button {
 }
 
 .calendar-cell .dot {
-  width: 5px;
-  height: 5px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   position: absolute;
-  bottom: 4px;
+  bottom: 6px;
 }
 
 .calendar-cell .dot.dot-blue { background: var(--primary); }
@@ -662,6 +662,51 @@ input, button {
 .legend-dot.dot-blue { background: var(--primary); }
 .legend-dot.dot-green { background: var(--green); }
 .legend-dot.dot-orange { background: var(--orange); }
+
+/* Calendar Monthly Stats */
+.calendar-stats {
+  margin-top: 16px;
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+  padding: 16px;
+  box-shadow: var(--shadow);
+}
+
+.calendar-stats h3 {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 12px;
+}
+
+.stats-row {
+  display: flex;
+  gap: 10px;
+}
+
+.stat-card {
+  flex: 1;
+  text-align: center;
+  padding: 10px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+
+.stat-card .stat-num {
+  font-size: 22px;
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+
+.stat-card .stat-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.stat-card.stat-total .stat-num { color: var(--text); }
+.stat-card.stat-done .stat-num { color: var(--green); }
+.stat-card.stat-undone .stat-num { color: var(--orange); }
+.stat-card.stat-rate .stat-num { color: var(--primary); }
 
 /* ============================
    Modal / Bottom Sheet

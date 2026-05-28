@@ -479,6 +479,22 @@
         cell.day + dotHtml +
       '</div>';
     }).join('');
+
+    // Calculate and render monthly stats
+    var monthStr = year + '-' + String(month + 1).padStart(2, '0');
+    var totalInMonth = 0, doneInMonth = 0;
+    for (var i = 0; i < state.allTodos.length; i++) {
+      if (state.allTodos[i].date.substring(0, 7) === monthStr) {
+        totalInMonth++;
+        if (state.allTodos[i].done) doneInMonth++;
+      }
+    }
+
+    document.getElementById('statsMonthLabel').textContent = (month + 1) + '月统计';
+    document.getElementById('statTotal').textContent = totalInMonth;
+    document.getElementById('statDone').textContent = doneInMonth;
+    document.getElementById('statUndone').textContent = totalInMonth - doneInMonth;
+    document.getElementById('statRate').textContent = totalInMonth > 0 ? Math.round(doneInMonth / totalInMonth * 100) + '%' : '-';
   }
 
   // -- Modal --
