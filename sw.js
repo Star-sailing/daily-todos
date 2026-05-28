@@ -1,4 +1,4 @@
-var CACHE_NAME = 'todolist-v2';
+var CACHE_NAME = 'todolist-v3';
 var ASSETS = [
   './',
   'index.html',
