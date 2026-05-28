@@ -466,13 +466,15 @@
       var dotHtml = '';
       var info = dateMap.get(cell.dateStr);
       if (info) {
+        var dotClass = 'dot-blue';
         if (cell.dateStr > today) {
-          dotHtml = '<span class="dot dot-blue"></span>';
+          dotClass = 'dot-blue';
         } else if (info.done === info.total) {
-          dotHtml = '<span class="dot dot-green"></span>';
+          dotClass = 'dot-green';
         } else {
-          dotHtml = '<span class="dot dot-orange"></span>';
+          dotClass = 'dot-orange';
         }
+        dotHtml = '<span class="dot ' + dotClass + '">' + info.total + '</span>';
       }
 
       return '<div class="' + cls + '" data-date="' + cell.dateStr + '">' +
