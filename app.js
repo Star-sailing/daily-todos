@@ -660,7 +660,8 @@
     try {
       await Sync.addTodo(todo);
     } catch (e) {
-      console.warn('Sync add failed, using local', e);
+      console.warn('Sync add failed', e);
+      Toast.show('保存失败，请检查网络后刷新');
     }
     state.allTodos.push(todo);
     renderCurrentView();
@@ -681,6 +682,7 @@
       await Sync.updateTodo(id, { done: todo.done });
     } catch (e) {
       console.warn('Sync toggle failed', e);
+      Toast.show('同步失败，请检查网络');
     }
     renderCurrentView();
     if (state.modalDate) renderModalList();
@@ -695,15 +697,17 @@
     }
     if (idx === -1) return;
     state.allTodos.splice(idx, 1);
+    var deleted = true;
     try {
       await Sync.deleteTodo(id);
     } catch (e) {
       console.warn('Sync delete failed', e);
+      deleted = false;
     }
     renderCurrentView();
     if (state.modalDate) renderModalList();
     saveLocalCache();
-    Toast.show('已删除');
+    Toast.show(deleted ? '已删除' : '删除失败，请检查网络');
   }
 
   // Pin toggle
@@ -984,30 +988,29 @@
      APP ENTRY
      ================================================================== */
   async function enterApp() {
-    // Try to refresh the session token
-    await Auth.refreshSession();
+    // Try to refresh the session token first — MUST succeed
+    var session = await Auth.refreshSession();
+    if (!session) {
+      // Try to get current session as fallback
+      session = await Auth.getSession();
+    }
+    if (!session) {
+      // No valid session at all — must re-login
+      Toast.show('会话已过期，请重新登录');
+      document.getElementById('appPage').classList.add('hidden');
+      document.getElementById('authPage').classList.remove('hidden');
+      return;
+    }
 
     // Fetch todos from Supabase
     var todos = [];
-    var fetchOk = true;
     try {
       todos = await Sync.fetchTodos();
     } catch (e) {
-      fetchOk = false;
       console.warn('Fetch failed, falling back to cache', e);
       loadLocalCache();
       todos = localCache.todos;
-    }
-
-    // Only force re-login if there's truly no session AND no cache
-    if (!fetchOk && todos.length === 0) {
-      var session = await Auth.getSession();
-      if (!session) {
-        Toast.show('会话已过期，请重新登录');
-        document.getElementById('appPage').classList.add('hidden');
-        document.getElementById('authPage').classList.remove('hidden');
-        return;
-      }
+      Toast.show('网络连接失败，使用本地缓存');
     }
 
     // Load lastActiveDate from localStorage (persisted across sessions)
