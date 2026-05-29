@@ -170,14 +170,7 @@
       if (todo.highlighted !== undefined) payload.highlighted = todo.highlighted;
       var result = await supabase.from('todos').insert(payload);
       if (result.error) {
-        console.error('Supabase addTodo error:', {
-          message: result.error.message,
-          code: result.error.code,
-          details: result.error.details,
-          hint: result.error.hint,
-          status: result.status
-        });
-        // If columns don't exist, retry without them
+        // If columns don't exist, retry without them (silent — expected until DB migration)
         if (result.error.code === 'PGRST204') {
           delete payload.pinned;
           delete payload.highlighted;
@@ -185,6 +178,12 @@
           if (result.error) throw result.error;
           return todo;
         }
+        console.error('Supabase addTodo error:', {
+          message: result.error.message,
+          code: result.error.code,
+          details: result.error.details,
+          hint: result.error.hint
+        });
         throw result.error;
       }
       return todo;
@@ -202,7 +201,7 @@
       if (changes.highlighted !== undefined) payload.highlighted = changes.highlighted;
       var result = await supabase.from('todos').update(payload).eq('id', id);
       if (result.error) {
-        // If columns don't exist, retry without them
+        // If columns don't exist, retry without them (silent — expected until DB migration)
         if (result.error.code === 'PGRST204') {
           delete payload.pinned;
           delete payload.highlighted;
@@ -210,6 +209,12 @@
           if (result.error) throw result.error;
           return;
         }
+        console.error('Supabase updateTodo error:', {
+          message: result.error.message,
+          code: result.error.code,
+          details: result.error.details,
+          hint: result.error.hint
+        });
         throw result.error;
       }
     },
@@ -237,13 +242,7 @@
       });
       var result = await supabase.from('todos').insert(payload);
       if (result.error) {
-        console.error('Supabase batchAdd error:', {
-          message: result.error.message,
-          code: result.error.code,
-          details: result.error.details,
-          hint: result.error.hint
-        });
-        // If columns don't exist, retry without them
+        // If columns don't exist, retry without them (silent — expected until DB migration)
         if (result.error.code === 'PGRST204') {
           payload = payload.map(function(item) {
             delete item.pinned;
@@ -254,6 +253,12 @@
           if (result.error) throw result.error;
           return;
         }
+        console.error('Supabase batchAdd error:', {
+          message: result.error.message,
+          code: result.error.code,
+          details: result.error.details,
+          hint: result.error.hint
+        });
         throw result.error;
       }
     },
