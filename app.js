@@ -157,31 +157,37 @@
 
     async addTodo(todo) {
       if (!supabase) return null;
-      var result = await supabase.from('todos').insert({
+      var payload = {
         id: todo.id,
         text: todo.text,
         done: todo.done,
         date: todo.date,
-        created_at: todo.createdAt || new Date().toISOString(),
         carried_from: todo.carriedFrom || null,
-        sort_order: todo.order || 0,
-        pinned: todo.pinned || false,
-        highlighted: todo.highlighted || false
-      }).select();
+        sort_order: todo.order || 0
+      };
+      // Only include pinned/highlighted if the DB has these columns
+      if (todo.pinned !== undefined) payload.pinned = todo.pinned;
+      if (todo.highlighted !== undefined) payload.highlighted = todo.highlighted;
+      var result = await supabase.from('todos').insert(payload);
       if (result.error) {
         console.error('Supabase addTodo error:', {
           message: result.error.message,
           code: result.error.code,
           details: result.error.details,
-          hint: result.error.hint
+          hint: result.error.hint,
+          status: result.status
         });
+        // If columns don't exist, retry without them
+        if (result.error.code === 'PGRST204') {
+          delete payload.pinned;
+          delete payload.highlighted;
+          result = await supabase.from('todos').insert(payload);
+          if (result.error) throw result.error;
+          return todo;
+        }
         throw result.error;
       }
-      // .select() returns an array; RLS might filter the read-back,
-      // so don't use .single() — it throws if 0 or 2+ rows returned
-      if (result.data && result.data.length > 0) return result.data[0];
-      // Insert succeeded but read-back was empty (RLS quirk) — not an error
-      return null;
+      return todo;
     },
 
     async updateTodo(id, changes) {
@@ -195,7 +201,17 @@
       if (changes.pinned !== undefined) payload.pinned = changes.pinned;
       if (changes.highlighted !== undefined) payload.highlighted = changes.highlighted;
       var result = await supabase.from('todos').update(payload).eq('id', id);
-      if (result.error) throw result.error;
+      if (result.error) {
+        // If columns don't exist, retry without them
+        if (result.error.code === 'PGRST204') {
+          delete payload.pinned;
+          delete payload.highlighted;
+          result = await supabase.from('todos').update(payload).eq('id', id);
+          if (result.error) throw result.error;
+          return;
+        }
+        throw result.error;
+      }
     },
 
     async deleteTodo(id) {
@@ -207,17 +223,17 @@
     async batchAdd(todos) {
       if (!supabase || todos.length === 0) return;
       var payload = todos.map(function(t) {
-        return {
+        var item = {
           id: t.id,
           text: t.text,
           done: t.done,
           date: t.date,
-          created_at: t.createdAt || new Date().toISOString(),
           carried_from: t.carriedFrom || null,
-          sort_order: t.order || 0,
-          pinned: t.pinned || false,
-          highlighted: t.highlighted || false
+          sort_order: t.order || 0
         };
+        if (t.pinned !== undefined) item.pinned = t.pinned;
+        if (t.highlighted !== undefined) item.highlighted = t.highlighted;
+        return item;
       });
       var result = await supabase.from('todos').insert(payload);
       if (result.error) {
@@ -227,6 +243,17 @@
           details: result.error.details,
           hint: result.error.hint
         });
+        // If columns don't exist, retry without them
+        if (result.error.code === 'PGRST204') {
+          payload = payload.map(function(item) {
+            delete item.pinned;
+            delete item.highlighted;
+            return item;
+          });
+          result = await supabase.from('todos').insert(payload);
+          if (result.error) throw result.error;
+          return;
+        }
         throw result.error;
       }
     },
