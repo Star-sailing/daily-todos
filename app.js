@@ -162,13 +162,26 @@
         text: todo.text,
         done: todo.done,
         date: todo.date,
+        created_at: todo.createdAt || new Date().toISOString(),
         carried_from: todo.carriedFrom || null,
         sort_order: todo.order || 0,
         pinned: todo.pinned || false,
         highlighted: todo.highlighted || false
-      }).select().single();
-      if (result.error) throw result.error;
-      return result.data;
+      }).select();
+      if (result.error) {
+        console.error('Supabase addTodo error:', {
+          message: result.error.message,
+          code: result.error.code,
+          details: result.error.details,
+          hint: result.error.hint
+        });
+        throw result.error;
+      }
+      // .select() returns an array; RLS might filter the read-back,
+      // so don't use .single() — it throws if 0 or 2+ rows returned
+      if (result.data && result.data.length > 0) return result.data[0];
+      // Insert succeeded but read-back was empty (RLS quirk) — not an error
+      return null;
     },
 
     async updateTodo(id, changes) {
@@ -199,6 +212,7 @@
           text: t.text,
           done: t.done,
           date: t.date,
+          created_at: t.createdAt || new Date().toISOString(),
           carried_from: t.carriedFrom || null,
           sort_order: t.order || 0,
           pinned: t.pinned || false,
@@ -206,7 +220,15 @@
         };
       });
       var result = await supabase.from('todos').insert(payload);
-      if (result.error) throw result.error;
+      if (result.error) {
+        console.error('Supabase batchAdd error:', {
+          message: result.error.message,
+          code: result.error.code,
+          details: result.error.details,
+          hint: result.error.hint
+        });
+        throw result.error;
+      }
     },
 
     async batchUpdate(updates) {
@@ -641,6 +663,18 @@
      EVENT HANDLERS
      ================================================================== */
 
+  // Shared helper: detect auth errors and force re-login if needed
+  function isAuthError(e) {
+    if (e && (e.status === 401 || e.status === 403 || e.code === 'PGRST301' ||
+        (e.message && (e.message.indexOf('JWT') !== -1 || e.message.indexOf('auth') !== -1)))) {
+      Toast.show('登录已过期，请重新登录');
+      document.getElementById('appPage').classList.add('hidden');
+      document.getElementById('authPage').classList.remove('hidden');
+      return true;
+    }
+    return false;
+  }
+
   // Add todo
   async function handleAdd(text, dateStr) {
     dateStr = dateStr || getToday();
@@ -659,14 +693,17 @@
     };
     try {
       await Sync.addTodo(todo);
+      state.allTodos.push(todo);
+      renderCurrentView();
+      if (state.modalDate === dateStr) renderModalList();
+      saveLocalCache();
     } catch (e) {
-      console.warn('Sync add failed', e);
+      console.error('Sync add failed — full error:', e);
+      if (isAuthError(e)) return;
       Toast.show('保存失败，请检查网络后刷新');
+      // Don't add to local state — data integrity: if it's not on the server,
+      // showing it locally would cause data loss confusion on next refresh
     }
-    state.allTodos.push(todo);
-    renderCurrentView();
-    if (state.modalDate === dateStr) renderModalList();
-    saveLocalCache();
   }
 
   // Toggle todo
@@ -677,16 +714,19 @@
     }
     if (idx === -1) return;
     var todo = state.allTodos[idx];
-    todo.done = !todo.done;
+    var newDone = !todo.done;
     try {
-      await Sync.updateTodo(id, { done: todo.done });
+      await Sync.updateTodo(id, { done: newDone });
+      todo.done = newDone;
+      renderCurrentView();
+      if (state.modalDate) renderModalList();
+      saveLocalCache();
     } catch (e) {
       console.warn('Sync toggle failed', e);
+      if (isAuthError(e)) return;
       Toast.show('同步失败，请检查网络');
+      // Don't update local state — if sync fails, keep the original state
     }
-    renderCurrentView();
-    if (state.modalDate) renderModalList();
-    saveLocalCache();
   }
 
   // Delete todo
@@ -696,40 +736,54 @@
       if (state.allTodos[i].id === id) { idx = i; break; }
     }
     if (idx === -1) return;
-    state.allTodos.splice(idx, 1);
-    var deleted = true;
+    var todo = state.allTodos[idx];
     try {
       await Sync.deleteTodo(id);
+      state.allTodos.splice(idx, 1);
+      renderCurrentView();
+      if (state.modalDate) renderModalList();
+      saveLocalCache();
+      Toast.show('已删除');
     } catch (e) {
       console.warn('Sync delete failed', e);
-      deleted = false;
+      if (isAuthError(e)) return;
+      Toast.show('删除失败，请检查网络');
+      // Don't remove from local state — if sync fails, keep the todo
     }
-    renderCurrentView();
-    if (state.modalDate) renderModalList();
-    saveLocalCache();
-    Toast.show(deleted ? '已删除' : '删除失败，请检查网络');
   }
 
   // Pin toggle
   async function handlePin(id) {
     var todo = state.allTodos.find(function(t) { return t.id === id; });
     if (!todo) return;
-    todo.pinned = !todo.pinned;
-    try { await Sync.updateTodo(id, { pinned: todo.pinned }); } catch (e) {}
-    renderCurrentView();
-    if (state.modalDate) renderModalList();
-    saveLocalCache();
+    var newPinned = !todo.pinned;
+    try {
+      await Sync.updateTodo(id, { pinned: newPinned });
+      todo.pinned = newPinned;
+      renderCurrentView();
+      if (state.modalDate) renderModalList();
+      saveLocalCache();
+    } catch (e) {
+      console.warn('Sync pin failed', e);
+      // Don't update local state — if sync fails, keep original
+    }
   }
 
   // Highlight toggle
   async function handleHighlight(id) {
     var todo = state.allTodos.find(function(t) { return t.id === id; });
     if (!todo) return;
-    todo.highlighted = !todo.highlighted;
-    try { await Sync.updateTodo(id, { highlighted: todo.highlighted }); } catch (e) {}
-    renderCurrentView();
-    if (state.modalDate) renderModalList();
-    saveLocalCache();
+    var newHighlighted = !todo.highlighted;
+    try {
+      await Sync.updateTodo(id, { highlighted: newHighlighted });
+      todo.highlighted = newHighlighted;
+      renderCurrentView();
+      if (state.modalDate) renderModalList();
+      saveLocalCache();
+    } catch (e) {
+      console.warn('Sync highlight failed', e);
+      // Don't update local state — if sync fails, keep original
+    }
   }
 
   // Switch tab
@@ -1066,8 +1120,27 @@
   function registerSW() {
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('sw.js')
-        .then(function() { console.log('SW registered'); })
+        .then(function(reg) {
+          console.log('SW registered');
+          // Listen for Service Worker updates
+          reg.addEventListener('updatefound', function() {
+            var newWorker = reg.installing;
+            if (!newWorker) return;
+            newWorker.addEventListener('statechange', function() {
+              if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                console.log('New version available — reloading');
+                // New SW installed, auto-reload to apply
+                window.location.reload();
+              }
+            });
+          });
+        })
         .catch(function() { /* non-critical */ });
+
+      // Detect when a waiting SW takes over
+      navigator.serviceWorker.addEventListener('controllerchange', function() {
+        console.log('SW controller changed');
+      });
     }
 
     // Install prompt
@@ -1120,9 +1193,20 @@
     }
 
     // Listen for auth state changes
-    supabase.auth.onAuthStateChange(async function(event, _session) {
+    supabase.auth.onAuthStateChange(async function(event, session) {
       if (event === 'SIGNED_IN' && document.getElementById('appPage').classList.contains('hidden')) {
         await enterApp();
+      }
+      if (event === 'SIGNED_OUT') {
+        // Token expired or user signed out — force back to login
+        console.warn('Auth state: SIGNED_OUT — returning to login');
+        document.getElementById('appPage').classList.add('hidden');
+        document.getElementById('authPage').classList.remove('hidden');
+        localStorage.removeItem('todoapp_cache'); // clear stale cache
+        Toast.show('登录已过期，请重新登录');
+      }
+      if (event === 'TOKEN_REFRESHED' && session) {
+        console.log('Auth state: TOKEN_REFRESHED');
       }
     });
   }

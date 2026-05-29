@@ -1,4 +1,4 @@
-var CACHE_NAME = 'todolist-v4';
+var CACHE_NAME = 'todolist-v5';
 var ASSETS = [
   './',
   'index.html',
@@ -35,18 +35,20 @@ self.addEventListener('fetch', function(event) {
     return;
   }
 
+  // Network-first strategy: always try network, fall back to cache
   event.respondWith(
-    caches.match(event.request).then(function(cached) {
-      return cached || fetch(event.request).then(function(response) {
-        // Cache successful same-origin responses
-        if (response.ok && response.type === 'basic') {
-          var clone = response.clone();
-          caches.open(CACHE_NAME).then(function(cache) {
-            cache.put(event.request, clone);
-          });
-        }
-        return response;
-      });
+    fetch(event.request).then(function(response) {
+      // Network succeeded — update cache in background for offline use
+      if (response.ok && response.type === 'basic') {
+        var clone = response.clone();
+        caches.open(CACHE_NAME).then(function(cache) {
+          cache.put(event.request, clone);
+        });
+      }
+      return response;
+    }).catch(function() {
+      // Network failed (offline) — serve from cache
+      return caches.match(event.request);
     })
   );
 });
