@@ -201,8 +201,12 @@
           <button id="habitViewHistory" class="toggle-btn" data-mode="history">打卡记录</button>
         </div>
         <div id="habitsAddBar" class="add-bar">
+          <select id="habitAddType" style="flex-shrink:0;padding:6px 4px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12px;background:var(--surface);color:var(--text);">
+            <option value="habit">习惯</option>
+            <option value="ongoing">持续</option>
+          </select>
           <input type="text" id="habitInput" class="add-input" placeholder="添加新习惯..." maxlength="100" autocomplete="off">
-          <button id="habitConfigBtn" class="btn-icon" title="配置周期和长度" style="flex-shrink:0;width:34px;height:34px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text-secondary);cursor:pointer;display:flex;align-items:center;justify-content:center;">&#9881;</button>
+          <button id="habitConfigBtn" class="habit-config-btn" title="配置周期和长度">&#9881;</button>
           <button id="habitAddBtn" class="btn btn-add">添加</button>
         </div>
         <div id="habitConfigPanel" class="habit-config hidden">

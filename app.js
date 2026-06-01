@@ -1654,6 +1654,14 @@
     renderHabits();
   });
 
+  // Habit add type toggle: hide config + change placeholder for ongoing mode
+  document.getElementById('habitAddType').addEventListener('change', function() {
+    var isOngoing = this.value === 'ongoing';
+    document.getElementById('habitConfigBtn').style.display = isOngoing ? 'none' : 'flex';
+    document.getElementById('habitConfigPanel').classList.add('hidden');
+    document.getElementById('habitInput').placeholder = isOngoing ? '添加持续任务...' : '添加新习惯...';
+  });
+
   // Habit config toggle
   document.getElementById('habitConfigBtn').addEventListener('click', function() {
     var panel = document.getElementById('habitConfigPanel');
@@ -1663,17 +1671,38 @@
   // Init habit start date
   document.getElementById('habitStartDate').value = getToday();
 
-  // Habit add — read config values
+  // Habit add — read type + config values
   document.getElementById('habitAddBtn').addEventListener('click', function() {
     var input = document.getElementById('habitInput');
     var text = input.value.trim();
     if (!text) return;
     input.value = '';
-    var periodType = document.getElementById('habitPeriodType').value;
-    var periodCount = parseInt(document.getElementById('habitPeriodCount').value) || 1;
-    var totalLength = parseInt(document.getElementById('habitTotalLength').value) || 30;
-    var startDate = document.getElementById('habitStartDate').value || getToday();
-    handleAddHabit(text, periodType, periodCount, totalLength, startDate);
+    var addType = document.getElementById('habitAddType').value;
+    if (addType === 'ongoing') {
+      // Create ongoing task
+      var dateStr = getToday();
+      var all = state.allTodos.filter(function(t) { return t.date === dateStr && t.taskType !== 'ongoing' && t.taskType !== 'someday'; });
+      var maxOrder = all.reduce(function(m, t) { return Math.max(m, t.order); }, -1);
+      var todo = {
+        id: generateId(), text: text, done: false, date: dateStr,
+        createdAt: new Date().toISOString(), carriedFrom: null, order: maxOrder + 1,
+        pinned: false, highlighted: false, deadline: null, hasDeadline: false,
+        taskType: 'ongoing', ongoingCount: 0, lastOngoingDate: null, lastOngoingNote: ''
+      };
+      Sync.addTodo(todo).then(function() {
+        state.allTodos.push(todo);
+        renderHabits();
+        saveLocalCache();
+      }).catch(function(e) {
+        if (!isAuthError(e)) Toast.show('添加失败');
+      });
+    } else {
+      var periodType = document.getElementById('habitPeriodType').value;
+      var periodCount = parseInt(document.getElementById('habitPeriodCount').value) || 1;
+      var totalLength = parseInt(document.getElementById('habitTotalLength').value) || 30;
+      var startDate = document.getElementById('habitStartDate').value || getToday();
+      handleAddHabit(text, periodType, periodCount, totalLength, startDate);
+    }
   });
 
   document.getElementById('habitInput').addEventListener('keydown', function(e) {
