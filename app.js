@@ -911,9 +911,14 @@
       html += '<div class="habit-card" data-id="' + h.id + '" data-type="habit">' +
         '<div class="habit-header">' +
           '<span class="habit-content">' + escapeHtml(h.content) + '</span>' +
-          '<button class="habit-delete" data-action="delete-habit" aria-label="删除">' +
-            '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
-          '</button>' +
+          '<div class="habit-header-actions">' +
+            '<button class="habit-edit" data-action="edit-habit" title="编辑">' +
+              '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>' +
+            '</button>' +
+            '<button class="habit-delete" data-action="delete-habit" aria-label="删除">' +
+              '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+            '</button>' +
+          '</div>' +
         '</div>' +
         '<div class="habit-meta">' +
           '<span>' + periodLabel + ' · 目标' + h.totalLength + '次 · 从' + formatDateFull(h.startDate) + '开始</span>' +
@@ -935,9 +940,14 @@
       html += '<div class="habit-card ongoing-card" data-id="' + ot.id + '" data-type="ongoing">' +
         '<div class="habit-header">' +
           '<span class="habit-content">' + escapeHtml(ot.text) + '</span>' +
-          '<button class="habit-delete" data-action="delete-ongoing" aria-label="删除">' +
-            '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
-          '</button>' +
+          '<div class="habit-header-actions">' +
+            '<button class="habit-edit" data-action="edit-ongoing" title="编辑">' +
+              '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>' +
+            '</button>' +
+            '<button class="habit-delete" data-action="delete-ongoing" aria-label="删除">' +
+              '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+            '</button>' +
+          '</div>' +
         '</div>' +
         '<div class="habit-meta">' +
           '<span>自由打卡 · 从' + formatDateFull(ot.date) + '开始</span>' +
@@ -1490,6 +1500,69 @@
     }
   }
 
+  async function handleEditHabit(habitId) {
+    var habit = state.habits.find(function(h) { return h.id === habitId; });
+    if (!habit) return;
+    // Edit name
+    var newContent = prompt('编辑习惯名称', habit.content);
+    if (newContent === null || newContent.trim() === '') return;
+    newContent = newContent.trim();
+    // Edit params
+    var editParams = confirm('是否也编辑参数（周期、次数、起始日期）？');
+    var newPeriodType = habit.periodType;
+    var newPeriodCount = habit.periodCount;
+    var newTotalLength = habit.totalLength;
+    var newStartDate = habit.startDate;
+    if (editParams) {
+      var pt = prompt('周期类型 (daily/weekly/monthly)', habit.periodType);
+      if (pt && (pt === 'daily' || pt === 'weekly' || pt === 'monthly')) newPeriodType = pt;
+      var pc = prompt('间隔 (数字)', habit.periodCount);
+      if (pc !== null && parseInt(pc) > 0) newPeriodCount = parseInt(pc);
+      var tl = prompt('总次数', habit.totalLength);
+      if (tl !== null && parseInt(tl) > 0) newTotalLength = parseInt(tl);
+      var sd = prompt('起始日期 (YYYY-MM-DD)', habit.startDate);
+      if (sd && /^\d{4}-\d{2}-\d{2}$/.test(sd)) newStartDate = sd;
+    }
+    try {
+      // Can't update habits table directly via Supabase — delete and recreate? No, that loses logs.
+      // Instead update local state and the DB habit record.
+      // HabitSync doesn't have updateHabit — let's add one or use inline query.
+      var result = await supabase.from('habits').update({
+        content: newContent,
+        period_type: newPeriodType,
+        period_count: newPeriodCount,
+        total_length: newTotalLength,
+        start_date: newStartDate
+      }).eq('id', habitId);
+      if (result.error) throw result.error;
+      habit.content = newContent;
+      habit.periodType = newPeriodType;
+      habit.periodCount = newPeriodCount;
+      habit.totalLength = newTotalLength;
+      habit.startDate = newStartDate;
+      renderHabits();
+    } catch (e) {
+      console.warn('Edit habit failed', e);
+      Toast.show('编辑失败');
+    }
+  }
+
+  async function handleEditOngoing(id) {
+    var todo = state.allTodos.find(function(t) { return t.id === id; });
+    if (!todo) return;
+    var newText = prompt('编辑名称', todo.text);
+    if (newText === null || newText.trim() === '') return;
+    newText = newText.trim();
+    try {
+      await Sync.updateTodo(id, { text: newText });
+      todo.text = newText;
+      renderHabits();
+    } catch (e) {
+      console.warn('Edit ongoing failed', e);
+      Toast.show('编辑失败');
+    }
+  }
+
   function checkHabitAchievement(habitId) {
     var habit = state.habits.find(function(h) { return h.id === habitId; });
     if (!habit) return;
@@ -1820,7 +1893,9 @@
     if (!action) return;
     if (action.dataset.action === 'check-habit' && type === 'habit') handleCheckHabit(id);
     else if (action.dataset.action === 'delete-habit' && type === 'habit') handleDeleteHabit(id);
+    else if (action.dataset.action === 'edit-habit' && type === 'habit') handleEditHabit(id);
     else if (action.dataset.action === 'check-ongoing' && type === 'ongoing') handleIncrementOngoing(id);
+    else if (action.dataset.action === 'edit-ongoing' && type === 'ongoing') handleEditOngoing(id);
     else if (action.dataset.action === 'delete-ongoing' && type === 'ongoing') {
       var idx = -1;
       for (var i = 0; i < state.allTodos.length; i++) {

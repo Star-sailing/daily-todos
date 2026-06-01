@@ -1182,6 +1182,32 @@ input, button {
   color: var(--text);
 }
 
+.habit-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.habit-edit {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: none;
+  border-radius: 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.habit-edit:hover {
+  color: var(--primary);
+  background: var(--primary-light);
+}
+
 .habit-delete {
   flex-shrink: 0;
   width: 24px;
