@@ -28,6 +28,11 @@
     return (d.getMonth() + 1) + '月' + d.getDate() + '日';
   }
 
+  function formatDateFull(dateStr) {
+    const d = new Date(dateStr + 'T00:00:00');
+    return d.getFullYear() + '年' + (d.getMonth() + 1) + '月' + d.getDate() + '日';
+  }
+
   function getWeekday(dateStr) {
     const d = new Date(dateStr + 'T00:00:00');
     const days = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
@@ -908,7 +913,7 @@
           '</button>' +
         '</div>' +
         '<div class="habit-meta">' +
-          '<span>' + periodLabel + ' · 目标' + h.totalLength + '次 · 从' + formatDate(h.startDate) + '开始</span>' +
+          '<span>' + periodLabel + ' · 目标' + h.totalLength + '次 · 从' + formatDateFull(h.startDate) + '开始</span>' +
           '<span>已完成 ' + progress.done + ' / ' + progress.total + '</span>' +
         '</div>' +
         '<div class="habit-progress-bar">' +
@@ -932,7 +937,7 @@
           '</button>' +
         '</div>' +
         '<div class="habit-meta">' +
-          '<span>自由打卡 · 从' + formatDate(ot.date) + '开始</span>' +
+          '<span>自由打卡 · 从' + formatDateFull(ot.date) + '开始</span>' +
           '<span>已做 ' + (ot.ongoingCount || 0) + ' 天</span>' +
         '</div>' +
         '<div class="habit-progress-bar">' +
