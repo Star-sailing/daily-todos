@@ -527,6 +527,7 @@
     allTodos: [],
     habits: [],
     habitLogs: [],
+    habitViewMode: 'active', // 'active' or 'history'
     currentTab: 'tabToday',
     calendarMonth: new Date().getMonth(),
     calendarYear: new Date().getFullYear(),
@@ -819,6 +820,29 @@
 
   // -- Habits View --
   function renderHabits() {
+    // Update toggle buttons
+    var activeBtn = document.getElementById('habitViewActive');
+    var histBtn = document.getElementById('habitViewHistory');
+    if (activeBtn && histBtn) {
+      activeBtn.classList.toggle('active', state.habitViewMode === 'active');
+      histBtn.classList.toggle('active', state.habitViewMode === 'history');
+    }
+    // Show/hide config area
+    var configPanel = document.getElementById('habitConfigPanel');
+    var addBar = document.getElementById('habitsAddBar');
+
+    if (state.habitViewMode === 'active') {
+      if (addBar) addBar.classList.remove('hidden');
+      if (configPanel && configPanel._wasOpen) configPanel.classList.remove('hidden');
+      renderHabitsActive();
+    } else {
+      if (configPanel) { configPanel._wasOpen = !configPanel.classList.contains('hidden'); configPanel.classList.add('hidden'); }
+      if (addBar) addBar.classList.add('hidden');
+      renderHabitHistory();
+    }
+  }
+
+  function renderHabitsActive() {
     var listEl = document.getElementById('habitsList');
     var emptyEl = document.getElementById('habitsEmpty');
     if (state.habits.length === 0) {
@@ -854,6 +878,66 @@
         '</button>' +
       '</div>';
     }).join('');
+  }
+
+  function renderHabitHistory() {
+    var listEl = document.getElementById('habitsList');
+    var emptyEl = document.getElementById('habitsEmpty');
+    var today = getToday();
+
+    // Collect all dates that have habit logs or ongoing activity
+    var allDates = new Set();
+    for (var i = 0; i < state.habitLogs.length; i++) {
+      if (state.habitLogs[i].date < today) allDates.add(state.habitLogs[i].date);
+    }
+    for (var j = 0; j < state.allTodos.length; j++) {
+      var t = state.allTodos[j];
+      if (t.taskType === 'ongoing' && t.lastOngoingDate && t.lastOngoingDate < today) {
+        allDates.add(t.lastOngoingDate);
+      }
+    }
+
+    var dates = Array.from(allDates).sort().reverse();
+    if (dates.length === 0) {
+      listEl.innerHTML = '';
+      emptyEl.classList.remove('hidden');
+      return;
+    }
+    emptyEl.classList.add('hidden');
+
+    listEl.innerHTML = dates.map(function(date) {
+      var items = [];
+
+      // Habit logs for this date
+      for (var hi = 0; hi < state.habitLogs.length; hi++) {
+        var l = state.habitLogs[hi];
+        if (l.date === date && l.done) {
+          var h = state.habits.find(function(hb) { return hb.id === l.habitId; });
+          if (h) items.push('<div class="todo-row habit-row"><div class="indicator habit"></div><span class="txt">打卡: ' + escapeHtml(h.content) + '</span></div>');
+        }
+      }
+
+      // Ongoing task activity for this date
+      for (var oi = 0; oi < state.allTodos.length; oi++) {
+        var ot = state.allTodos[oi];
+        if (ot.taskType === 'ongoing' && ot.lastOngoingDate === date) {
+          items.push('<div class="todo-row ongoing-row"><div class="indicator ongoing"></div><span class="txt">' + escapeHtml(ot.text) + (ot.lastOngoingNote ? ' — ' + escapeHtml(ot.lastOngoingNote) : '') + '</span></div>');
+        }
+      }
+
+      if (items.length === 0) return '';
+
+      return '<div class="history-card expanded" data-date="' + date + '">' +
+        '<div class="history-card-header">' +
+          '<div class="date-info">' +
+            '<div class="date-label">' + formatDateShort(date) + '</div>' +
+            '<div class="date-weekday">' + getWeekday(date) + '</div>' +
+          '</div>' +
+          '<div class="progress-info"><div>' + items.length + ' 项活动</div></div>' +
+        '</div>' +
+        '<div class="history-card-body">' + items.join('') + '</div>' +
+      '</div>';
+    }).join('').replace(/<div class="history-card expanded" data-date=""><\/div>/g, '');
   }
 
   function showHabitReminder() {
@@ -1478,6 +1562,16 @@
     if (!action) return;
     if (action.dataset.action === 'check-habit') handleCheckHabit(habitId);
     else if (action.dataset.action === 'delete-habit') handleDeleteHabit(habitId);
+  });
+
+  // Habit view toggle
+  document.getElementById('habitViewActive').addEventListener('click', function() {
+    state.habitViewMode = 'active';
+    renderHabits();
+  });
+  document.getElementById('habitViewHistory').addEventListener('click', function() {
+    state.habitViewMode = 'history';
+    renderHabits();
   });
 
   // Habit config toggle

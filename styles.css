@@ -747,6 +747,18 @@ input, button {
   border-radius: 3px;
 }
 
+.history-card-body .todo-row .indicator.missed {
+  background: #FCA5A5;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.history-card-body .todo-row.missed .txt {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
 .todo-badge.ongoing-note {
   background: #EEF2FF;
   color: var(--primary);
@@ -1027,6 +1039,34 @@ input, button {
   font-size: 13px;
   background: var(--bg);
   color: var(--text);
+}
+
+.habit-view-toggle {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+  background: var(--bg);
+  border-radius: var(--radius-sm);
+  padding: 3px;
+}
+
+.habit-view-toggle .toggle-btn {
+  flex: 1;
+  padding: 6px 12px;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  background: transparent;
+  color: var(--text-secondary);
+  transition: all 0.15s;
+}
+
+.habit-view-toggle .toggle-btn.active {
+  background: var(--surface);
+  color: var(--primary);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
 }
 
 .habits-list {
