@@ -10,7 +10,7 @@
 - **前端：** 纯 HTML + CSS + Vanilla JS（零框架，零构建）
 - **后端/数据库：** Supabase（PostgreSQL + 用户认证）
 - **部署：** GitHub Pages（master 分支 root 目录）
-- **离线支持：** Service Worker（network-first + 新版本自动检测更新）
+- **离线支持：** Service Worker（network-first + 自动检测更新）
 
 ## 文件结构
 ```
@@ -41,31 +41,42 @@ daily-todos/
 - 添加/打勾/删除待办，已完成自动沉底
 - **📌置顶：** 蓝色左边框，排最前
 - **⭐高亮：** 橙色左边框+黄色背景
-- **⏰ DDL：** 红色左边框+淡红背景，显示"剩余X天"/"已逾期X天"徽章，排最前
-- **💭 有空可以做：** 底部独立板块，虚线边框，轻量提醒列表
+- **⏰ DDL：** 红色左边框+淡红背景，日历图标设截止日期，显示"剩余X天"/"已逾期X天"，排最前
+- **💭 有空可以做：** 底部独立板块，虚线边框轻量提醒，添加/删除
 
 ### 顺延引擎
-- 每天打开 App，未完成原始待办自动复制到今天（中间副本不再重复顺延）
-- 文本去重，徽章显示"从X月X日开始，已拖N天"
-- 午夜自动检测日期变更
+- 只顺延原始待办（中间副本不重复顺延），按文本去重
+- 徽章显示"从X月X日开始，已拖N天"
+- 午夜 60 秒检测自动触发
 
 ### 历史视图
 - 按日期倒序卡片，折叠/展开双模式，日期选择器可跳转
-- **编辑模式：** 点"编辑"后可切换待办完成状态，可向过去日期添加待办
+- **编辑模式：** 点「编辑」后进入可编辑状态（按钮变红提示），可：
+  - 切换待办完成/未完成（点击圆点）
+  - 删除单条记录（✕ 按钮）
+  - 向指定日期添加新待办（每个卡片底部「+ 添加到此日期」）
 - 编辑后卡片保持展开状态不折叠
 
 ### 日历视图
-- 月份网格，彩色标记（蓝=未来/绿=全完成/橙=有未完成），独立统计面板
+- 月份网格，彩色横线标记（蓝=未来/绿=全完成/橙=有未完成）
+- 独立月度统计面板，可前后翻月
 
 ### 打卡板块（第 4 个 Tab）
-- 两种模式切换：**当前习惯** / **打卡记录**
-- **习惯：** 每日/每周/每月周期，自定义长度和起始日期，进度条+打卡按钮
-- **持续任务：** 自由打卡，无固定频率，`+1` 按钮 + 每日笔记
-- 已打卡可再点取消，登录时未打卡习惯弹出提醒
-- 达成目标时弹出成就提示
+- **模式切换：** 当前习惯 / 打卡记录
+- **习惯：** 每日/每周/每月周期，可配间隔、总次数、起始日期
+  - 进度条 + 打卡按钮，显示起始年月日
+  - 可编辑名称和参数（周期、频率等）
+  - 已打卡可再点取消
+- **持续任务：** 自由打卡无固定频率，+1 按钮 + 每日笔记，显示起始年月日
+  - 可编辑名称
+  - 已打卡可再点取消
+- **打卡记录：** 按日期卡片展示习惯打卡 + 持续任务活动
+- 登录时未打卡习惯弹出 Toast 提醒
+- 达成目标时弹出 🎉 成就提示
 
 ### 认证与 PWA
-- 记住账号/密码/自动登录，SIGNED_OUT 自动退回登录页
+- 记住账号/密码/自动登录
+- SIGNED_OUT 自动退回登录页
 - network-first SW + 新版本自动 reload
 
 ## 数据库迁移 SQL
@@ -80,8 +91,26 @@ ALTER TABLE todos ADD COLUMN IF NOT EXISTS ongoing_count INTEGER DEFAULT 0;
 ALTER TABLE todos ADD COLUMN IF NOT EXISTS last_ongoing_date DATE;
 ALTER TABLE todos ADD COLUMN IF NOT EXISTS last_ongoing_note TEXT DEFAULT '';
 
-CREATE TABLE IF NOT EXISTS habits ( /* ...如上 */ );
-CREATE TABLE IF NOT EXISTS habit_logs ( /* ...如上 */ );
+CREATE TABLE IF NOT EXISTS habits (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  content TEXT NOT NULL,
+  period_type TEXT DEFAULT 'daily',
+  period_count INT DEFAULT 1,
+  total_length INT DEFAULT 30,
+  start_date DATE DEFAULT CURRENT_DATE,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS habit_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  habit_id UUID NOT NULL REFERENCES habits(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  date DATE DEFAULT CURRENT_DATE,
+  done BOOLEAN DEFAULT true,
+  UNIQUE(habit_id, date)
+);
+-- + RLS policies + INSERT triggers for auth.uid()
 ```
 
 ## 开发流程
