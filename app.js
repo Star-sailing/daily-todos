@@ -1288,7 +1288,7 @@
   });
 
   // Ongoing task add
-  document.getElementById('ongoingAddBtn').addEventListener('click', function() {
+  document.getElementById('ongoingAddBtn').addEventListener('click', async function() {
     var input = document.getElementById('ongoingInput');
     var text = input.value.trim();
     if (!text) return;
