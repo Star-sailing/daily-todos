@@ -1166,9 +1166,105 @@ input, button {
   cursor: default;
 }
 
+.habit-check-btn.ongoing-check-btn {
+  background: var(--primary-light);
+  color: var(--primary);
+}
+
+.habit-check-btn.ongoing-check-btn.checked {
+  background: var(--green-light);
+  color: var(--green);
+}
+
+.habit-progress-fill.ongoing-fill {
+  background: var(--primary);
+}
+
+.ongoing-card {
+  border-left: 3px dashed var(--primary);
+}
+
+.ongoing-note-display {
+  font-size: 12px;
+  color: var(--primary);
+  font-style: italic;
+  margin-bottom: 8px;
+  padding: 4px 8px;
+  background: #EEF2FF;
+  border-radius: 4px;
+}
+
 /* ============================
    Ongoing Task Type
    ============================ */
+/* ============================
+   Someday Section (Today view)
+   ============================ */
+.someday-section {
+  margin-top: 20px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.someday-header {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.someday-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.someday-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #FAFBFC;
+  border-radius: var(--radius-sm);
+  border-left: 3px dashed var(--border);
+  font-size: 14px;
+  color: var(--text);
+}
+
+.someday-item .someday-text {
+  flex: 1;
+  color: var(--text-secondary);
+}
+
+.someday-item .someday-delete {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: none;
+  border-radius: 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.someday-item:hover .someday-delete {
+  opacity: 1;
+}
+
+.someday-item .someday-delete:hover {
+  color: var(--danger);
+  background: var(--danger-light);
+}
+
+/* Remove old ongoing-add-bar since ongoing moved to Habits tab */
 .ongoing-add-bar {
   border-top: 1px dashed var(--border);
   padding-top: 12px;

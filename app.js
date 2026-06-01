@@ -543,7 +543,7 @@
 
   function getTodosByDate(date) {
     return state.allTodos
-      .filter(function(t) { return t.date === date; })
+      .filter(function(t) { return t.date === date && t.taskType !== 'ongoing' && t.taskType !== 'someday'; })
       .sort(function(a, b) { return a.order - b.order; });
   }
 
@@ -641,6 +641,7 @@
         '</div>' +
       '</div>';
     }).join('');
+    renderSomeday();
   }
 
   // -- History View --
@@ -653,11 +654,12 @@
     // Set date picker default to today
     document.getElementById('historyDatePicker').value = today;
 
-    // Group past todos by date
+    // Group past todos by date (exclude ongoing/someday — they have their own views)
     var dateGroups = new Map();
     for (var i = 0; i < state.allTodos.length; i++) {
       var t = state.allTodos[i];
       if (t.date >= today) continue;
+      if (t.taskType === 'ongoing' || t.taskType === 'someday') continue;
       if (!dateGroups.has(t.date)) dateGroups.set(t.date, []);
       dateGroups.get(t.date).push(t);
     }
@@ -845,23 +847,32 @@
   function renderHabitsActive() {
     var listEl = document.getElementById('habitsList');
     var emptyEl = document.getElementById('habitsEmpty');
-    if (state.habits.length === 0) {
+    // Collect ongoing tasks (taskType === 'ongoing') to display as free-form cards
+    var ongoingTasks = state.allTodos.filter(function(t) { return t.taskType === 'ongoing'; });
+    var hasContent = state.habits.length > 0 || ongoingTasks.length > 0;
+
+    if (!hasContent) {
       listEl.innerHTML = '';
       emptyEl.classList.remove('hidden');
       return;
     }
     emptyEl.classList.add('hidden');
+
     var today = getToday();
-    listEl.innerHTML = state.habits.map(function(h) {
+    var html = '';
+
+    // Regular habits
+    for (var i = 0; i < state.habits.length; i++) {
+      var h = state.habits[i];
       var progress = getHabitProgress(h);
       var doneToday = isHabitDoneToday(h.id);
       var periodLabel = h.periodType === 'daily' ? '每日' :
                         h.periodType === 'weekly' ? '每' + h.periodCount + '周' :
                         '每月';
-      return '<div class="habit-card" data-id="' + h.id + '">' +
+      html += '<div class="habit-card" data-id="' + h.id + '" data-type="habit">' +
         '<div class="habit-header">' +
           '<span class="habit-content">' + escapeHtml(h.content) + '</span>' +
-          '<button class="habit-delete" data-action="delete-habit" aria-label="删除习惯">' +
+          '<button class="habit-delete" data-action="delete-habit" aria-label="删除">' +
             '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
           '</button>' +
         '</div>' +
@@ -877,7 +888,36 @@
           (doneToday ? '今日已打卡 ✓' : '打卡') +
         '</button>' +
       '</div>';
-    }).join('');
+    }
+
+    // Ongoing tasks as free-form cards
+    for (var j = 0; j < ongoingTasks.length; j++) {
+      var ot = ongoingTasks[j];
+      var otdoneToday = ot.lastOngoingDate === today;
+      html += '<div class="habit-card ongoing-card" data-id="' + ot.id + '" data-type="ongoing">' +
+        '<div class="habit-header">' +
+          '<span class="habit-content">' + escapeHtml(ot.text) + '</span>' +
+          '<button class="habit-delete" data-action="delete-ongoing" aria-label="删除">' +
+            '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+          '</button>' +
+        '</div>' +
+        '<div class="habit-meta">' +
+          '<span>自由打卡 · 无固定频率</span>' +
+          '<span>已做 ' + (ot.ongoingCount || 0) + ' 天</span>' +
+        '</div>' +
+        '<div class="habit-progress-bar">' +
+          '<div class="habit-progress-fill ongoing-fill" style="width:' + Math.min((ot.ongoingCount || 0) * 5, 100) + '%"></div>' +
+        '</div>' +
+        (ot.lastOngoingDate === today && ot.lastOngoingNote ?
+          '<div class="ongoing-note-display">' + escapeHtml(ot.lastOngoingNote) + '</div>' : '') +
+        '<button class="habit-check-btn ongoing-check-btn' + (otdoneToday ? ' checked' : '') + '" data-action="check-ongoing"' +
+          (otdoneToday ? ' disabled' : '') + '>' +
+          (otdoneToday ? '今日已打卡 ✓' : '打卡+1') +
+        '</button>' +
+      '</div>';
+    }
+
+    listEl.innerHTML = html;
   }
 
   function renderHabitHistory() {
@@ -1444,49 +1484,74 @@
     }
   });
 
-  // Ongoing task add
-  document.getElementById('ongoingAddBtn').addEventListener('click', async function() {
-    var input = document.getElementById('ongoingInput');
+  // -- Someday ("有空可以做") section --
+  function renderSomeday() {
+    var listEl = document.getElementById('somedayList');
+    var emptyEl = document.getElementById('somedayEmpty');
+    var items = state.allTodos.filter(function(t) { return t.taskType === 'someday'; });
+    if (items.length === 0) {
+      listEl.innerHTML = '';
+      emptyEl.classList.remove('hidden');
+      return;
+    }
+    emptyEl.classList.add('hidden');
+    listEl.innerHTML = items.map(function(item) {
+      return '<div class="someday-item" data-id="' + item.id + '">' +
+        '<span class="someday-text">' + escapeHtml(item.text) + '</span>' +
+        '<button class="someday-delete" data-action="delete-someday" aria-label="删除">' +
+          '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+        '</button>' +
+      '</div>';
+    }).join('');
+  }
+
+  // Someday add
+  document.getElementById('somedayAddBtn').addEventListener('click', async function() {
+    var input = document.getElementById('somedayInput');
     var text = input.value.trim();
     if (!text) return;
     input.value = '';
-    // Create ongoing task
     var dateStr = getToday();
     var all = state.allTodos.filter(function(t) { return t.date === dateStr; });
     var maxOrder = all.reduce(function(m, t) { return Math.max(m, t.order); }, -1);
     var todo = {
-      id: generateId(),
-      text: text,
-      done: false,
-      date: dateStr,
-      createdAt: new Date().toISOString(),
-      carriedFrom: null,
-      order: maxOrder + 1,
-      pinned: false,
-      highlighted: false,
-      deadline: null,
-      hasDeadline: false,
-      taskType: 'ongoing',
-      ongoingCount: 0,
-      lastOngoingDate: null
+      id: generateId(), text: text, done: false, date: dateStr,
+      createdAt: new Date().toISOString(), carriedFrom: null, order: maxOrder + 1,
+      pinned: false, highlighted: false, deadline: null, hasDeadline: false,
+      taskType: 'someday', ongoingCount: 0, lastOngoingDate: null, lastOngoingNote: ''
     };
     try {
       await Sync.addTodo(todo);
       state.allTodos.push(todo);
-      renderCurrentView();
-      if (state.modalDate === dateStr) renderModalList();
+      renderSomeday();
       saveLocalCache();
     } catch (e) {
-      console.error('Sync add ongoing failed', e);
       if (isAuthError(e)) return;
-      Toast.show('保存失败，请检查网络后刷新');
+      Toast.show('添加失败');
     }
   });
 
-  document.getElementById('ongoingInput').addEventListener('keydown', function(e) {
-    if (e.key === 'Enter') {
-      document.getElementById('ongoingAddBtn').click();
+  document.getElementById('somedayInput').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') document.getElementById('somedayAddBtn').click();
+  });
+
+  // Someday delete via delegation
+  document.getElementById('somedayList').addEventListener('click', async function(e) {
+    var action = e.target.closest('[data-action="delete-someday"]');
+    if (!action) return;
+    var item = e.target.closest('.someday-item');
+    if (!item) return;
+    var id = item.dataset.id;
+    var idx = -1;
+    for (var i = 0; i < state.allTodos.length; i++) {
+      if (state.allTodos[i].id === id) { idx = i; break; }
     }
+    if (idx === -1) return;
+    try {
+      await Sync.deleteTodo(id);
+      state.allTodos.splice(idx, 1);
+      renderSomeday();
+    } catch (ex) { console.warn('Delete someday failed', ex); }
   });
 
   // History card expand/collapse (only in collapse mode)
@@ -1557,11 +1622,26 @@
   document.getElementById('habitsList').addEventListener('click', function(e) {
     var card = e.target.closest('.habit-card');
     if (!card) return;
-    var habitId = card.dataset.id;
+    var id = card.dataset.id;
+    var type = card.dataset.type;
     var action = e.target.closest('[data-action]');
     if (!action) return;
-    if (action.dataset.action === 'check-habit') handleCheckHabit(habitId);
-    else if (action.dataset.action === 'delete-habit') handleDeleteHabit(habitId);
+    if (action.dataset.action === 'check-habit' && type === 'habit') handleCheckHabit(id);
+    else if (action.dataset.action === 'delete-habit' && type === 'habit') handleDeleteHabit(id);
+    else if (action.dataset.action === 'check-ongoing' && type === 'ongoing') handleIncrementOngoing(id);
+    else if (action.dataset.action === 'delete-ongoing' && type === 'ongoing') {
+      var idx = -1;
+      for (var i = 0; i < state.allTodos.length; i++) {
+        if (state.allTodos[i].id === id) { idx = i; break; }
+      }
+      if (idx === -1) return;
+      try {
+        Sync.deleteTodo(id);
+        state.allTodos.splice(idx, 1);
+        renderHabits();
+        Toast.show('已删除');
+      } catch (ex) { console.warn('Delete ongoing failed', ex); }
+    }
   });
 
   // Habit view toggle

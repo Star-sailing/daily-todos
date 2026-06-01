@@ -97,11 +97,6 @@
           <input type="text" id="todoInput" class="add-input" placeholder="添加新的待办..." maxlength="200" autocomplete="off">
           <button id="addBtn" class="btn btn-add">添加</button>
         </div>
-        <!-- 持续任务添加栏 -->
-        <div class="add-bar ongoing-add-bar">
-          <input type="text" id="ongoingInput" class="add-input" placeholder="添加持续任务（无截止日期，记录累计天数）..." maxlength="200" autocomplete="off">
-          <button id="ongoingAddBtn" class="btn btn-add" style="background: var(--primary-light); color: var(--primary); border-color: var(--primary);">添加</button>
-        </div>
         <!-- 任务列表 -->
         <div id="todayList" class="todo-list"></div>
         <!-- 空状态 -->
@@ -111,6 +106,19 @@
             <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>
           </svg>
           <p>今天还没有待办<br>点击上方输入框添加一个吧</p>
+        </div>
+
+        <!-- 有空可以做 -->
+        <div class="someday-section">
+          <div class="someday-header">有空可以做</div>
+          <div class="add-bar">
+            <input type="text" id="somedayInput" class="add-input" placeholder="想起来可以做的..." maxlength="200" autocomplete="off">
+            <button id="somedayAddBtn" class="btn btn-add" style="background: var(--surface); color: var(--text-secondary); border: 1px dashed var(--border);">添加</button>
+          </div>
+          <div id="somedayList" class="someday-list"></div>
+          <div id="somedayEmpty" class="empty-state" style="padding:12px 0;">
+            <p style="font-size:13px;color:var(--text-muted);">记录一些不着急做、有空再做的小事</p>
+          </div>
         </div>
       </section>
 
