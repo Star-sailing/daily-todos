@@ -34,6 +34,12 @@
     return days[d.getDay()];
   }
 
+  function daysBetween(dateStr1, dateStr2) {
+    var d1 = new Date(dateStr1 + 'T00:00:00');
+    var d2 = new Date(dateStr2 + 'T00:00:00');
+    return Math.round((d2 - d1) / (1000 * 60 * 60 * 24));
+  }
+
   function generateId() {
     if (typeof crypto !== 'undefined' && crypto.randomUUID) {
       return crypto.randomUUID();
@@ -150,7 +156,12 @@
           carriedFrom: t.carried_from,
           order: t.sort_order,
           pinned: t.pinned || false,
-          highlighted: t.highlighted || false
+          highlighted: t.highlighted || false,
+          deadline: t.deadline || null,
+          hasDeadline: t.has_deadline || false,
+          taskType: t.task_type || 'todo',
+          ongoingCount: t.ongoing_count || 0,
+          lastOngoingDate: t.last_ongoing_date || null
         };
       });
     },
@@ -165,15 +176,25 @@
         carried_from: todo.carriedFrom || null,
         sort_order: todo.order || 0
       };
-      // Only include pinned/highlighted if the DB has these columns
+      // Optional columns — only include if set or if DB may have them
       if (todo.pinned !== undefined) payload.pinned = todo.pinned;
       if (todo.highlighted !== undefined) payload.highlighted = todo.highlighted;
+      if (todo.deadline !== undefined) payload.deadline = todo.deadline;
+      if (todo.hasDeadline !== undefined) payload.has_deadline = todo.hasDeadline;
+      if (todo.taskType !== undefined && todo.taskType !== 'todo') payload.task_type = todo.taskType;
+      if (todo.ongoingCount !== undefined) payload.ongoing_count = todo.ongoingCount;
+      if (todo.lastOngoingDate !== undefined) payload.last_ongoing_date = todo.lastOngoingDate;
       var result = await supabase.from('todos').insert(payload);
       if (result.error) {
         // If columns don't exist, retry without them (silent — expected until DB migration)
         if (result.error.code === 'PGRST204') {
           delete payload.pinned;
           delete payload.highlighted;
+          delete payload.deadline;
+          delete payload.has_deadline;
+          delete payload.task_type;
+          delete payload.ongoing_count;
+          delete payload.last_ongoing_date;
           result = await supabase.from('todos').insert(payload);
           if (result.error) throw result.error;
           return todo;
@@ -199,12 +220,22 @@
       if (changes.order !== undefined) payload.sort_order = changes.order;
       if (changes.pinned !== undefined) payload.pinned = changes.pinned;
       if (changes.highlighted !== undefined) payload.highlighted = changes.highlighted;
+      if (changes.deadline !== undefined) payload.deadline = changes.deadline;
+      if (changes.hasDeadline !== undefined) payload.has_deadline = changes.hasDeadline;
+      if (changes.taskType !== undefined) payload.task_type = changes.taskType;
+      if (changes.ongoingCount !== undefined) payload.ongoing_count = changes.ongoingCount;
+      if (changes.lastOngoingDate !== undefined) payload.last_ongoing_date = changes.lastOngoingDate;
       var result = await supabase.from('todos').update(payload).eq('id', id);
       if (result.error) {
         // If columns don't exist, retry without them (silent — expected until DB migration)
         if (result.error.code === 'PGRST204') {
           delete payload.pinned;
           delete payload.highlighted;
+          delete payload.deadline;
+          delete payload.has_deadline;
+          delete payload.task_type;
+          delete payload.ongoing_count;
+          delete payload.last_ongoing_date;
           result = await supabase.from('todos').update(payload).eq('id', id);
           if (result.error) throw result.error;
           return;
@@ -238,6 +269,11 @@
         };
         if (t.pinned !== undefined) item.pinned = t.pinned;
         if (t.highlighted !== undefined) item.highlighted = t.highlighted;
+        if (t.deadline !== undefined) item.deadline = t.deadline;
+        if (t.hasDeadline !== undefined) item.has_deadline = t.hasDeadline;
+        if (t.taskType !== undefined && t.taskType !== 'todo') item.task_type = t.taskType;
+        if (t.ongoingCount !== undefined) item.ongoing_count = t.ongoingCount;
+        if (t.lastOngoingDate !== undefined) item.last_ongoing_date = t.lastOngoingDate;
         return item;
       });
       var result = await supabase.from('todos').insert(payload);
@@ -247,6 +283,11 @@
           payload = payload.map(function(item) {
             delete item.pinned;
             delete item.highlighted;
+            delete item.deadline;
+            delete item.has_deadline;
+            delete item.task_type;
+            delete item.ongoing_count;
+            delete item.last_ongoing_date;
             return item;
           });
           result = await supabase.from('todos').insert(payload);
@@ -278,6 +319,79 @@
   };
 
   /* ==================================================================
+     HABIT SYNC MODULE
+     ================================================================== */
+  var HabitSync = {
+    async fetchHabits() {
+      if (!supabase) return [];
+      var result = await supabase.from('habits').select('*').order('created_at', { ascending: true });
+      if (result.error) throw result.error;
+      return (result.data || []).map(function(h) {
+        return {
+          id: h.id,
+          content: h.content,
+          periodType: h.period_type,
+          periodCount: h.period_count,
+          totalLength: h.total_length,
+          startDate: h.start_date,
+          createdAt: h.created_at
+        };
+      });
+    },
+
+    async fetchHabitLogs() {
+      if (!supabase) return [];
+      var result = await supabase.from('habit_logs').select('*').order('date', { ascending: false });
+      if (result.error) throw result.error;
+      return (result.data || []).map(function(l) {
+        return {
+          id: l.id,
+          habitId: l.habit_id,
+          date: l.date,
+          done: l.done
+        };
+      });
+    },
+
+    async addHabit(habit) {
+      if (!supabase) return null;
+      var payload = {
+        id: habit.id,
+        content: habit.content,
+        period_type: habit.periodType,
+        period_count: habit.periodCount,
+        total_length: habit.totalLength,
+        start_date: habit.startDate
+      };
+      var result = await supabase.from('habits').insert(payload);
+      if (result.error) throw result.error;
+      return habit;
+    },
+
+    async deleteHabit(id) {
+      if (!supabase) return;
+      var result = await supabase.from('habits').delete().eq('id', id);
+      if (result.error) throw result.error;
+    },
+
+    async addHabitLog(log) {
+      if (!supabase) return null;
+      var payload = {
+        id: log.id,
+        habit_id: log.habitId,
+        date: log.date,
+        done: log.done
+      };
+      var result = await supabase.from('habit_logs').insert(payload);
+      if (result.error) {
+        if (result.error.code === '23505') return log;
+        throw result.error;
+      }
+      return log;
+    }
+  };
+
+  /* ==================================================================
      LOCAL CACHE
      ================================================================== */
   var localCache = { todos: [], lastActiveDate: '' };
@@ -304,6 +418,30 @@
   }
 
   /* ==================================================================
+     HABIT HELPERS
+     ================================================================== */
+  function getHabitCompletionDays(habitId) {
+    var logs = state.habitLogs.filter(function(l) { return l.habitId === habitId && l.done; });
+    return logs.length;
+  }
+
+  function isHabitDoneToday(habitId) {
+    var today = getToday();
+    for (var i = 0; i < state.habitLogs.length; i++) {
+      if (state.habitLogs[i].habitId === habitId && state.habitLogs[i].date === today && state.habitLogs[i].done) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function getHabitProgress(habit) {
+    var doneDays = getHabitCompletionDays(habit.id);
+    var pct = habit.totalLength > 0 ? Math.round(doneDays / habit.totalLength * 100) : 0;
+    return { done: doneDays, total: habit.totalLength, pct: pct };
+  }
+
+  /* ==================================================================
      CARRY-OVER ENGINE
      ================================================================== */
   function getMaxOrder(todos, date) {
@@ -322,7 +460,8 @@
 
     var undoneOlder = [];
     for (var i = 0; i < todos.length; i++) {
-      if (todos[i].date < today && !todos[i].done) {
+      // Only carry ORIGINAL todos (not intermediate carry-over copies), exclude ongoing
+      if (todos[i].date < today && !todos[i].done && !todos[i].carriedFrom && todos[i].taskType !== 'ongoing') {
         undoneOlder.push(todos[i]);
       }
     }
@@ -381,6 +520,8 @@
      ================================================================== */
   var state = {
     allTodos: [],
+    habits: [],
+    habitLogs: [],
     currentTab: 'tabToday',
     calendarMonth: new Date().getMonth(),
     calendarYear: new Date().getFullYear(),
@@ -414,28 +555,65 @@
     }
     emptyEl.classList.add('hidden');
 
-    // Sort: pinned first, then undone, then done
-    var pinned = todos.filter(function(t) { return t.pinned; });
-    var unpinned = todos.filter(function(t) { return !t.pinned; });
-    var pinnedUndone = pinned.filter(function(t) { return !t.done; });
-    var pinnedDone = pinned.filter(function(t) { return t.done; });
-    var unpinnedUndone = unpinned.filter(function(t) { return !t.done; });
-    var unpinnedDone = unpinned.filter(function(t) { return t.done; });
-    var sorted = pinnedUndone.concat(pinnedDone).concat(unpinnedUndone).concat(unpinnedDone);
+    // Sort: deadline+pinned first, then undone, then done
+    var priority = todos.filter(function(t) { return t.pinned || t.hasDeadline; });
+    var normal = todos.filter(function(t) { return !t.pinned && !t.hasDeadline; });
+    // Within priority: deadline first, then pinned-only
+    priority.sort(function(a, b) {
+      if (a.hasDeadline && !b.hasDeadline) return -1;
+      if (!a.hasDeadline && b.hasDeadline) return 1;
+      return a.order - b.order;
+    });
+    var priorityUndone = priority.filter(function(t) { return !t.done; });
+    var priorityDone = priority.filter(function(t) { return t.done; });
+    var normalUndone = normal.filter(function(t) { return !t.done; });
+    var normalDone = normal.filter(function(t) { return t.done; });
+    var sorted = priorityUndone.concat(priorityDone).concat(normalUndone).concat(normalDone);
 
     listEl.innerHTML = sorted.map(function(t) {
       var classes = 'todo-item';
       if (t.pinned) classes += ' pinned';
       if (t.highlighted) classes += ' highlighted';
+      if (t.hasDeadline) classes += ' has-deadline';
+      // Deadline badge
+      var deadlineBadge = '';
+      if (t.hasDeadline && t.deadline) {
+        var remaining = daysBetween(getToday(), t.deadline);
+        if (remaining < 0) {
+          deadlineBadge = '<span class="todo-badge deadline-overdue">已逾期' + Math.abs(remaining) + '天</span>';
+        } else if (remaining === 0) {
+          deadlineBadge = '<span class="todo-badge deadline-today">今天截止</span>';
+        } else {
+          deadlineBadge = '<span class="todo-badge deadline-countdown">剩余' + remaining + '天</span>';
+        }
+      }
+      var isOngoing = t.taskType === 'ongoing';
+      if (isOngoing) {
+        classes += ' ongoing';
+      }
+      if (isOngoing) {
+        return '<div class="' + classes + '" data-id="' + t.id + '">' +
+          '<button class="ongoing-btn" data-action="increment" title="打卡+1">+1</button>' +
+          '<span class="todo-text">' + escapeHtml(t.text) + '</span>' +
+          (t.ongoingCount ? '<span class="todo-badge ongoing-count">已做' + t.ongoingCount + '天</span>' : '') +
+          '<button class="todo-delete" data-action="delete" aria-label="删除">' +
+            '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+          '</button>' +
+        '</div>';
+      }
       return '<div class="' + classes + '" data-id="' + t.id + '">' +
         '<div class="todo-check' + (t.done ? ' done' : '') + '" data-action="toggle"></div>' +
         '<span class="todo-text' + (t.done ? ' done' : '') + '">' + escapeHtml(t.text) + '</span>' +
-        (t.carriedFrom ? '<span class="todo-badge">从' + formatDateShort(t.carriedFrom) + '顺延</span>' : '') +
+        deadlineBadge +
+        (t.carriedFrom ? '<span class="todo-badge">从' + formatDateShort(t.carriedFrom) + '开始，已拖' + daysBetween(t.carriedFrom, getToday()) + '天</span>' : '') +
         '<button class="todo-action-btn" data-action="pin" title="' + (t.pinned ? '取消置顶' : '置顶') + '">' +
           '<svg width="14" height="14" viewBox="0 0 24 24" fill="' + (t.pinned ? '#4A6CF7' : 'none') + '" stroke="' + (t.pinned ? '#4A6CF7' : '#9CA3AF') + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 00-1.11-1.79l-1.78-.9A2 2 0 0115 10.76V6h1a2 2 0 000-4H8a2 2 0 000 4h1v4.76a2 2 0 01-1.11 1.79l-1.78.9A2 2 0 005 15.24Z"/></svg>' +
         '</button>' +
         '<button class="todo-action-btn" data-action="highlight" title="' + (t.highlighted ? '取消高亮' : '高亮') + '">' +
           '<svg width="14" height="14" viewBox="0 0 24 24" fill="' + (t.highlighted ? '#F59E0B' : 'none') + '" stroke="' + (t.highlighted ? '#F59E0B' : '#9CA3AF') + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>' +
+        '</button>' +
+        '<button class="todo-action-btn" data-action="deadline" title="' + (t.hasDeadline ? '修改截止日期' : '设置截止日期') + '">' +
+          '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="' + (t.hasDeadline ? '#EF4444' : '#9CA3AF') + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>' +
         '</button>' +
         '<button class="todo-delete" data-action="delete" aria-label="删除">' +
           '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
@@ -592,6 +770,56 @@
     document.getElementById('statRate').textContent = totalInMonth > 0 ? Math.round(doneInMonth / totalInMonth * 100) + '%' : '-';
   }
 
+  // -- Habits View --
+  function renderHabits() {
+    var listEl = document.getElementById('habitsList');
+    var emptyEl = document.getElementById('habitsEmpty');
+    if (state.habits.length === 0) {
+      listEl.innerHTML = '';
+      emptyEl.classList.remove('hidden');
+      return;
+    }
+    emptyEl.classList.add('hidden');
+    var today = getToday();
+    listEl.innerHTML = state.habits.map(function(h) {
+      var progress = getHabitProgress(h);
+      var doneToday = isHabitDoneToday(h.id);
+      var periodLabel = h.periodType === 'daily' ? '每日' :
+                        h.periodType === 'weekly' ? '每' + h.periodCount + '周' :
+                        '每月';
+      return '<div class="habit-card" data-id="' + h.id + '">' +
+        '<div class="habit-header">' +
+          '<span class="habit-content">' + escapeHtml(h.content) + '</span>' +
+          '<button class="habit-delete" data-action="delete-habit" aria-label="删除习惯">' +
+            '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+          '</button>' +
+        '</div>' +
+        '<div class="habit-meta">' +
+          '<span>' + periodLabel + ' · 目标' + h.totalLength + '次</span>' +
+          '<span>已完成 ' + progress.done + ' / ' + progress.total + '</span>' +
+        '</div>' +
+        '<div class="habit-progress-bar">' +
+          '<div class="habit-progress-fill" style="width:' + progress.pct + '%"></div>' +
+        '</div>' +
+        '<button class="habit-check-btn' + (doneToday ? ' checked' : '') + '" data-action="check-habit"' +
+          (doneToday ? ' disabled' : '') + '>' +
+          (doneToday ? '今日已打卡 ✓' : '打卡') +
+        '</button>' +
+      '</div>';
+    }).join('');
+  }
+
+  function showHabitReminder() {
+    var today = getToday();
+    var unchecked = [];
+    for (var i = 0; i < state.habits.length; i++) {
+      if (!isHabitDoneToday(state.habits[i].id)) unchecked.push(state.habits[i]);
+    }
+    if (unchecked.length === 0) return;
+    var names = unchecked.map(function(h) { return h.content; }).join('、');
+    Toast.show('今日未打卡: ' + names, 4000);
+  }
+
   // -- Modal --
   function openModal(dateStr) {
     state.modalDate = dateStr;
@@ -631,28 +859,62 @@
 
     var today = getToday();
     var isEditable = state.modalDate >= today;
-    // Sort: pinned first, then undone, then done
-    var pinned = todos.filter(function(t) { return t.pinned; });
-    var unpinned = todos.filter(function(t) { return !t.pinned; });
-    var pinnedUndone = pinned.filter(function(t) { return !t.done; });
-    var pinnedDone = pinned.filter(function(t) { return t.done; });
-    var unpinnedUndone = unpinned.filter(function(t) { return !t.done; });
-    var unpinnedDone = unpinned.filter(function(t) { return t.done; });
-    var sorted = pinnedUndone.concat(pinnedDone).concat(unpinnedUndone).concat(unpinnedDone);
+    // Sort: deadline+pinned first, then undone, then done
+    var priority = todos.filter(function(t) { return t.pinned || t.hasDeadline; });
+    var normal = todos.filter(function(t) { return !t.pinned && !t.hasDeadline; });
+    priority.sort(function(a, b) {
+      if (a.hasDeadline && !b.hasDeadline) return -1;
+      if (!a.hasDeadline && b.hasDeadline) return 1;
+      return a.order - b.order;
+    });
+    var priorityUndone = priority.filter(function(t) { return !t.done; });
+    var priorityDone = priority.filter(function(t) { return t.done; });
+    var normalUndone = normal.filter(function(t) { return !t.done; });
+    var normalDone = normal.filter(function(t) { return t.done; });
+    var sorted = priorityUndone.concat(priorityDone).concat(normalUndone).concat(normalDone);
 
     listEl.innerHTML = sorted.map(function(t) {
+      var isOngoing = t.taskType === 'ongoing';
       var cls = 'todo-item';
       if (t.pinned) cls += ' pinned';
       if (t.highlighted) cls += ' highlighted';
+      if (t.hasDeadline) cls += ' has-deadline';
+      if (isOngoing) cls += ' ongoing';
+      // Deadline badge
+      var deadlineBadge = '';
+      if (t.hasDeadline && t.deadline) {
+        var remaining = daysBetween(getToday(), t.deadline);
+        if (remaining < 0) {
+          deadlineBadge = '<span class="todo-badge deadline-overdue">已逾期' + Math.abs(remaining) + '天</span>';
+        } else if (remaining === 0) {
+          deadlineBadge = '<span class="todo-badge deadline-today">今天截止</span>';
+        } else {
+          deadlineBadge = '<span class="todo-badge deadline-countdown">剩余' + remaining + '天</span>';
+        }
+      }
       var html = '<div class="' + cls + '" data-id="' + t.id + '">';
-      if (isEditable) {
+      if (isOngoing) {
+        html += '<button class="ongoing-btn" data-action="increment" title="打卡+1">+1</button>';
+        html += '<span class="todo-text">' + escapeHtml(t.text) + '</span>';
+        if (t.ongoingCount) html += '<span class="todo-badge ongoing-count">已做' + t.ongoingCount + '天</span>';
+        if (isEditable) {
+          html += '<button class="todo-delete" data-action="delete" aria-label="删除">' +
+            '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+          '</button>';
+        }
+      } else if (isEditable) {
         html += '<div class="todo-check' + (t.done ? ' done' : '') + '" data-action="toggle"></div>';
         html += '<span class="todo-text' + (t.done ? ' done' : '') + '">' + escapeHtml(t.text) + '</span>';
+        html += deadlineBadge;
+        if (t.carriedFrom) html += '<span class="todo-badge">从' + formatDateShort(t.carriedFrom) + '开始，已拖' + daysBetween(t.carriedFrom, getToday()) + '天</span>';
         html += '<button class="todo-action-btn" data-action="pin" title="' + (t.pinned ? '取消置顶' : '置顶') + '">' +
           '<svg width="14" height="14" viewBox="0 0 24 24" fill="' + (t.pinned ? '#4A6CF7' : 'none') + '" stroke="' + (t.pinned ? '#4A6CF7' : '#9CA3AF') + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 00-1.11-1.79l-1.78-.9A2 2 0 0115 10.76V6h1a2 2 0 000-4H8a2 2 0 000 4h1v4.76a2 2 0 01-1.11 1.79l-1.78.9A2 2 0 005 15.24Z"/></svg>' +
         '</button>' +
         '<button class="todo-action-btn" data-action="highlight" title="' + (t.highlighted ? '取消高亮' : '高亮') + '">' +
           '<svg width="14" height="14" viewBox="0 0 24 24" fill="' + (t.highlighted ? '#F59E0B' : 'none') + '" stroke="' + (t.highlighted ? '#F59E0B' : '#9CA3AF') + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>' +
+        '</button>' +
+        '<button class="todo-action-btn" data-action="deadline" title="' + (t.hasDeadline ? '修改截止日期' : '设置截止日期') + '">' +
+          '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="' + (t.hasDeadline ? '#EF4444' : '#9CA3AF') + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>' +
         '</button>' +
         '<button class="todo-delete" data-action="delete" aria-label="删除">' +
           '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
@@ -660,6 +922,8 @@
       } else {
         html += '<div class="indicator ' + (t.done ? 'done' : 'undone') + '" style="width:10px;height:10px;border-radius:50%;flex-shrink:0;background:' + (t.done ? 'var(--green)' : 'var(--orange)') + '"></div>';
         html += '<span class="todo-text' + (t.done ? ' done' : '') + '">' + escapeHtml(t.text) + '</span>';
+        html += deadlineBadge;
+        if (t.carriedFrom) html += '<span class="todo-badge">从' + formatDateShort(t.carriedFrom) + '开始，已拖' + daysBetween(t.carriedFrom, getToday()) + '天</span>';
         if (t.pinned) html += '<span class="todo-badge">已置顶</span>';
         if (t.highlighted) html += '<span class="todo-badge">已高亮</span>';
       }
@@ -673,6 +937,7 @@
     if (state.currentTab === 'tabToday') renderToday();
     else if (state.currentTab === 'tabHistory') renderHistory();
     else if (state.currentTab === 'tabCalendar') renderCalendar();
+    else if (state.currentTab === 'tabHabits') renderHabits();
   }
 
   function updateHeaderDate() {
@@ -721,7 +986,12 @@
       carriedFrom: null,
       order: maxOrder + 1,
       pinned: false,
-      highlighted: false
+      highlighted: false,
+      deadline: null,
+      hasDeadline: false,
+      taskType: 'todo',
+      ongoingCount: 0,
+      lastOngoingDate: null
     };
     try {
       await Sync.addTodo(todo);
@@ -746,6 +1016,7 @@
     }
     if (idx === -1) return;
     var todo = state.allTodos[idx];
+    if (todo.taskType === 'ongoing') return;
     var newDone = !todo.done;
     try {
       await Sync.updateTodo(id, { done: newDone });
@@ -818,6 +1089,147 @@
     }
   }
 
+  // Set deadline
+  async function handleSetDeadline(id, deadlineValue) {
+    var todo = state.allTodos.find(function(t) { return t.id === id; });
+    if (!todo) return;
+    try {
+      if (deadlineValue === null) {
+        await Sync.updateTodo(id, { deadline: null, hasDeadline: false });
+        todo.deadline = null;
+        todo.hasDeadline = false;
+      } else {
+        await Sync.updateTodo(id, { deadline: deadlineValue, hasDeadline: true });
+        todo.deadline = deadlineValue;
+        todo.hasDeadline = true;
+      }
+      renderCurrentView();
+      if (state.modalDate) renderModalList();
+      saveLocalCache();
+    } catch (e) {
+      console.warn('Sync setDeadline failed', e);
+    }
+  }
+
+  // Show native date picker for deadline
+  function handleDeadlineClick(id) {
+    var todo = state.allTodos.find(function(t) { return t.id === id; });
+    if (!todo) return;
+    var input = document.createElement('input');
+    input.type = 'date';
+    input.value = todo.deadline || '';
+    input.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;pointer-events:none;';
+    document.body.appendChild(input);
+    var cleanup = function() {
+      if (document.body.contains(input)) document.body.removeChild(input);
+    };
+    input.addEventListener('change', function() {
+      var val = input.value;
+      cleanup();
+      if (val) {
+        handleSetDeadline(id, val);
+      } else {
+        handleSetDeadline(id, null);
+      }
+    });
+    input.addEventListener('blur', function() {
+      setTimeout(function() {
+        if (document.body.contains(input)) cleanup();
+      }, 300);
+    });
+    try { if (typeof input.showPicker === 'function') input.showPicker(); } catch (ex) { /* fallback */ }
+    input.focus();
+  }
+
+  // Increment ongoing task
+  async function handleIncrementOngoing(id) {
+    var todo = state.allTodos.find(function(t) { return t.id === id; });
+    if (!todo || todo.taskType !== 'ongoing') return;
+    var today = getToday();
+    if (todo.lastOngoingDate === today) {
+      Toast.show('今天已经打卡过了');
+      return;
+    }
+    var newCount = (todo.ongoingCount || 0) + 1;
+    try {
+      await Sync.updateTodo(id, { ongoingCount: newCount, lastOngoingDate: today });
+      todo.ongoingCount = newCount;
+      todo.lastOngoingDate = today;
+      renderCurrentView();
+      if (state.modalDate) renderModalList();
+      saveLocalCache();
+      Toast.show('已打卡！累计' + newCount + '天');
+    } catch (e) {
+      console.warn('Increment ongoing failed', e);
+      if (isAuthError(e)) return;
+      Toast.show('打卡失败');
+    }
+  }
+
+  // -- Habit handlers --
+  async function handleAddHabit(content, periodType, periodCount, totalLength, startDate) {
+    var habit = {
+      id: generateId(),
+      content: content,
+      periodType: periodType || 'daily',
+      periodCount: periodCount || 1,
+      totalLength: totalLength || 30,
+      startDate: startDate || getToday()
+    };
+    try {
+      await HabitSync.addHabit(habit);
+      state.habits.push(habit);
+      renderHabits();
+    } catch (e) {
+      console.warn('Add habit failed', e);
+      if (isAuthError(e)) return;
+      Toast.show('创建习惯失败');
+    }
+  }
+
+  async function handleCheckHabit(habitId) {
+    if (isHabitDoneToday(habitId)) return;
+    var log = { id: generateId(), habitId: habitId, date: getToday(), done: true };
+    try {
+      await HabitSync.addHabitLog(log);
+      state.habitLogs.push(log);
+      renderHabits();
+      checkHabitAchievement(habitId);
+    } catch (e) {
+      console.warn('Check habit failed', e);
+      if (isAuthError(e)) return;
+      Toast.show('打卡失败');
+    }
+  }
+
+  async function handleDeleteHabit(habitId) {
+    var idx = -1;
+    for (var i = 0; i < state.habits.length; i++) {
+      if (state.habits[i].id === habitId) { idx = i; break; }
+    }
+    if (idx === -1) return;
+    try {
+      await HabitSync.deleteHabit(habitId);
+      state.habits.splice(idx, 1);
+      state.habitLogs = state.habitLogs.filter(function(l) { return l.habitId !== habitId; });
+      renderHabits();
+      Toast.show('习惯已删除');
+    } catch (e) {
+      console.warn('Delete habit failed', e);
+      if (isAuthError(e)) return;
+      Toast.show('删除失败');
+    }
+  }
+
+  function checkHabitAchievement(habitId) {
+    var habit = state.habits.find(function(h) { return h.id === habitId; });
+    if (!habit) return;
+    var progress = getHabitProgress(habit);
+    if (progress.done >= progress.total) {
+      Toast.show('🎉 恭喜！"' + habit.content + '" 已完成全部目标！', 4000);
+    }
+  }
+
   // Switch tab
   function switchTab(tabName) {
     state.currentTab = tabName;
@@ -833,6 +1245,7 @@
     document.getElementById('tabToday').classList.toggle('hidden', tabName !== 'tabToday');
     document.getElementById('tabHistory').classList.toggle('hidden', tabName !== 'tabHistory');
     document.getElementById('tabCalendar').classList.toggle('hidden', tabName !== 'tabCalendar');
+    document.getElementById('tabHabits').classList.toggle('hidden', tabName !== 'tabHabits');
 
     renderCurrentView();
   }
@@ -852,6 +1265,8 @@
     else if (action.dataset.action === 'delete') handleDelete(id);
     else if (action.dataset.action === 'pin') handlePin(id);
     else if (action.dataset.action === 'highlight') handleHighlight(id);
+    else if (action.dataset.action === 'deadline') handleDeadlineClick(id);
+    else if (action.dataset.action === 'increment') handleIncrementOngoing(id);
   });
 
   // Add todo button
@@ -869,6 +1284,51 @@
       if (!text) return;
       this.value = '';
       handleAdd(text, getToday());
+    }
+  });
+
+  // Ongoing task add
+  document.getElementById('ongoingAddBtn').addEventListener('click', function() {
+    var input = document.getElementById('ongoingInput');
+    var text = input.value.trim();
+    if (!text) return;
+    input.value = '';
+    // Create ongoing task
+    var dateStr = getToday();
+    var all = state.allTodos.filter(function(t) { return t.date === dateStr; });
+    var maxOrder = all.reduce(function(m, t) { return Math.max(m, t.order); }, -1);
+    var todo = {
+      id: generateId(),
+      text: text,
+      done: false,
+      date: dateStr,
+      createdAt: new Date().toISOString(),
+      carriedFrom: null,
+      order: maxOrder + 1,
+      pinned: false,
+      highlighted: false,
+      deadline: null,
+      hasDeadline: false,
+      taskType: 'ongoing',
+      ongoingCount: 0,
+      lastOngoingDate: null
+    };
+    try {
+      await Sync.addTodo(todo);
+      state.allTodos.push(todo);
+      renderCurrentView();
+      if (state.modalDate === dateStr) renderModalList();
+      saveLocalCache();
+    } catch (e) {
+      console.error('Sync add ongoing failed', e);
+      if (isAuthError(e)) return;
+      Toast.show('保存失败，请检查网络后刷新');
+    }
+  });
+
+  document.getElementById('ongoingInput').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') {
+      document.getElementById('ongoingAddBtn').click();
     }
   });
 
@@ -936,6 +1396,35 @@
     renderStats();
   });
 
+  // Habits list clicks
+  document.getElementById('habitsList').addEventListener('click', function(e) {
+    var card = e.target.closest('.habit-card');
+    if (!card) return;
+    var habitId = card.dataset.id;
+    var action = e.target.closest('[data-action]');
+    if (!action) return;
+    if (action.dataset.action === 'check-habit') handleCheckHabit(habitId);
+    else if (action.dataset.action === 'delete-habit') handleDeleteHabit(habitId);
+  });
+
+  // Habit add
+  document.getElementById('habitAddBtn').addEventListener('click', function() {
+    var input = document.getElementById('habitInput');
+    var text = input.value.trim();
+    if (!text) return;
+    input.value = '';
+    handleAddHabit(text, 'daily', 1, 30, getToday());
+  });
+
+  document.getElementById('habitInput').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') {
+      var text = this.value.trim();
+      if (!text) return;
+      this.value = '';
+      handleAddHabit(text, 'daily', 1, 30, getToday());
+    }
+  });
+
   // Calendar date click
   document.getElementById('calendarGrid').addEventListener('click', function(e) {
     var cell = e.target.closest('.calendar-cell');
@@ -985,6 +1474,8 @@
     else if (action.dataset.action === 'delete') handleDelete(id);
     else if (action.dataset.action === 'pin') handlePin(id);
     else if (action.dataset.action === 'highlight') handleHighlight(id);
+    else if (action.dataset.action === 'deadline') handleDeadlineClick(id);
+    else if (action.dataset.action === 'increment') handleIncrementOngoing(id);
   });
 
   // Logout
@@ -1099,6 +1590,16 @@
       Toast.show('网络连接失败，使用本地缓存');
     }
 
+    // Fetch habits
+    try {
+      state.habits = await HabitSync.fetchHabits();
+      state.habitLogs = await HabitSync.fetchHabitLogs();
+    } catch (e) {
+      console.warn('Fetch habits failed', e);
+      state.habits = [];
+      state.habitLogs = [];
+    }
+
     // Load lastActiveDate from localStorage (persisted across sessions)
     loadLocalCache();
 
@@ -1119,6 +1620,9 @@
 
     // Start midnight checker
     startMidnightChecker();
+
+    // Remind about unchecked habits
+    showHabitReminder();
   }
 
   /* ==================================================================
