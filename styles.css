@@ -1180,6 +1180,20 @@ input, button {
   font-size: 15px;
   font-weight: 600;
   color: var(--text);
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.habit-content:hover {
+  color: var(--primary);
+}
+
+.ongoing-name {
+  cursor: pointer;
+}
+
+.ongoing-name:hover {
+  color: var(--primary);
 }
 
 .habit-header-actions {
