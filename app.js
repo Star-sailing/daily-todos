@@ -751,6 +751,9 @@
                   '<div class="indicator ' + (t.done ? 'done' : 'undone') + '"></div>' +
                 '</button>' +
                 '<span class="txt' + (t.done ? ' was-done' : '') + '">' + escapeHtml(t.text) + '</span>' +
+                '<button class="history-delete-btn" data-action="history-delete" title="删除">' +
+                  '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+                '</button>' +
                 '</div>';
             }
             return '<div class="todo-row">' +
@@ -1623,6 +1626,25 @@
     } catch (ex) { console.warn('Delete someday failed', ex); }
   });
 
+  // History delete item
+  async function handleHistoryDeleteItem(id) {
+    var idx = -1;
+    for (var i = 0; i < state.allTodos.length; i++) {
+      if (state.allTodos[i].id === id) { idx = i; break; }
+    }
+    if (idx === -1) return;
+    try {
+      await Sync.deleteTodo(id);
+      state.allTodos.splice(idx, 1);
+      renderHistory();
+      saveLocalCache();
+      Toast.show('已删除');
+    } catch (e) {
+      console.warn('History delete failed', e);
+      Toast.show('删除失败');
+    }
+  }
+
   // History toggle todo done/undone
   async function handleHistoryToggle(id) {
     var todo = state.allTodos.find(function(t) { return t.id === id; });
@@ -1658,6 +1680,14 @@
       if (!state.historyEditMode) return;
       var row = toggleBtn.closest('.todo-row');
       if (row) handleHistoryToggle(row.dataset.id);
+      return;
+    }
+    // History delete button (only in edit mode)
+    var deleteBtn = e.target.closest('[data-action="history-delete"]');
+    if (deleteBtn) {
+      if (!state.historyEditMode) return;
+      var row = deleteBtn.closest('.todo-row');
+      if (row) handleHistoryDeleteItem(row.dataset.id);
       return;
     }
     // Add-to-date button
