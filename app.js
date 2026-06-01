@@ -540,7 +540,8 @@
     statsMonth: new Date().getMonth(),
     statsYear: new Date().getFullYear(),
     modalDate: null,
-    historyMode: 'collapse' // 'collapse' or 'expand'
+    historyMode: 'collapse', // 'collapse' or 'expand'
+    historyEditMode: false
   };
 
   /* ==================================================================
@@ -656,6 +657,18 @@
     var container = document.getElementById('historyList');
     var emptyEl = document.getElementById('historyEmpty');
     var isExpanded = state.historyMode === 'expand';
+    var isEditing = state.historyEditMode;
+
+    // Update edit toggle button
+    var editBtn = document.getElementById('historyEditBtn');
+    if (editBtn) {
+      editBtn.textContent = isEditing ? '退出编辑' : '编辑';
+      editBtn.classList.toggle('active', isEditing);
+    }
+    var historyAddBar = document.getElementById('historyAddBar');
+    if (historyAddBar) {
+      historyAddBar.classList.toggle('hidden', !isEditing);
+    }
 
     // Set date picker default to today
     document.getElementById('historyDatePicker').value = today;
@@ -725,13 +738,21 @@
         '</div>' +
         '<div class="history-card-body">' +
           todos.map(function(t) {
-            return '<div class="todo-row" data-id="' + t.id + '">' +
-              '<button class="history-toggle-btn" data-action="history-toggle" title="切换完成状态">' +
-                '<div class="indicator ' + (t.done ? 'done' : 'undone') + '"></div>' +
-              '</button>' +
+            if (isEditing) {
+              return '<div class="todo-row" data-id="' + t.id + '">' +
+                '<button class="history-toggle-btn" data-action="history-toggle" title="切换完成状态">' +
+                  '<div class="indicator ' + (t.done ? 'done' : 'undone') + '"></div>' +
+                '</button>' +
+                '<span class="txt' + (t.done ? ' was-done' : '') + '">' + escapeHtml(t.text) + '</span>' +
+                '</div>';
+            }
+            return '<div class="todo-row">' +
+              '<div class="indicator ' + (t.done ? 'done' : 'undone') + '"></div>' +
               '<span class="txt' + (t.done ? ' was-done' : '') + '">' + escapeHtml(t.text) + '</span>' +
               '</div>';
           }).join('') +
+          // Add-to-date button in edit mode
+          (isEditing ? '<div class="history-add-to-date"><button class="btn-small" data-action="add-to-date" data-date="' + date + '">+ 添加到此日期</button></div>' : '') +
           extraItems +
         '</div>' +
       '</div>';
@@ -885,7 +906,7 @@
           '</button>' +
         '</div>' +
         '<div class="habit-meta">' +
-          '<span>' + periodLabel + ' · 目标' + h.totalLength + '次</span>' +
+          '<span>' + periodLabel + ' · 目标' + h.totalLength + '次 · 从' + formatDateShort(h.startDate) + '开始</span>' +
           '<span>已完成 ' + progress.done + ' / ' + progress.total + '</span>' +
         '</div>' +
         '<div class="habit-progress-bar">' +
@@ -910,7 +931,7 @@
           '</button>' +
         '</div>' +
         '<div class="habit-meta">' +
-          '<span>自由打卡 · 无固定频率</span>' +
+          '<span>自由打卡 · 从' + formatDateShort(ot.date) + '开始</span>' +
           '<span>已做 ' + (ot.ongoingCount || 0) + ' 天</span>' +
         '</div>' +
         '<div class="habit-progress-bar">' +
@@ -1606,11 +1627,21 @@
 
   // History card interactions
   document.getElementById('historyList').addEventListener('click', function(e) {
-    // History toggle button
+    // History toggle button (only in edit mode)
     var toggleBtn = e.target.closest('[data-action="history-toggle"]');
     if (toggleBtn) {
+      if (!state.historyEditMode) return;
       var row = toggleBtn.closest('.todo-row');
       if (row) handleHistoryToggle(row.dataset.id);
+      return;
+    }
+    // Add-to-date button
+    var addToDateBtn = e.target.closest('[data-action="add-to-date"]');
+    if (addToDateBtn) {
+      var targetDate = addToDateBtn.dataset.date;
+      document.getElementById('historyAddInput').dataset.targetDate = targetDate;
+      document.getElementById('historyAddInput').placeholder = '添加待办到 ' + targetDate + '...';
+      document.getElementById('historyAddInput').focus();
       return;
     }
     // Card expand/collapse (only in collapse mode)
@@ -1619,6 +1650,46 @@
     if (!header) return;
     var card = header.parentElement;
     card.classList.toggle('expanded');
+  });
+
+  // History edit toggle
+  document.getElementById('historyEditBtn').addEventListener('click', function() {
+    state.historyEditMode = !state.historyEditMode;
+    renderHistory();
+    if (!state.historyEditMode) {
+      document.getElementById('historyAddBar').classList.add('hidden');
+    }
+  });
+
+  // History add to past date
+  document.getElementById('historyAddBtn').addEventListener('click', async function() {
+    var input = document.getElementById('historyAddInput');
+    var text = input.value.trim();
+    var targetDate = input.dataset.targetDate;
+    if (!text || !targetDate) return;
+    input.value = '';
+    var all = state.allTodos.filter(function(t) { return t.date === targetDate; });
+    var maxOrder = all.reduce(function(m, t) { return Math.max(m, t.order); }, -1);
+    var todo = {
+      id: generateId(), text: text, done: false, date: targetDate,
+      createdAt: new Date().toISOString(), carriedFrom: null, order: maxOrder + 1,
+      pinned: false, highlighted: false, deadline: null, hasDeadline: false,
+      taskType: 'todo', ongoingCount: 0, lastOngoingDate: null, lastOngoingNote: ''
+    };
+    try {
+      await Sync.addTodo(todo);
+      state.allTodos.push(todo);
+      renderHistory();
+      saveLocalCache();
+      Toast.show('已添加到 ' + targetDate);
+    } catch (e) {
+      if (isAuthError(e)) return;
+      Toast.show('添加失败');
+    }
+  });
+
+  document.getElementById('historyAddInput').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') document.getElementById('historyAddBtn').click();
   });
 
   // History mode toggle

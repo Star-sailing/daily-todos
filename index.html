@@ -130,7 +130,12 @@
             <button id="modeCollapse" class="mode-btn active">折叠</button>
             <button id="modeExpand" class="mode-btn">展开</button>
           </div>
+          <button id="historyEditBtn" class="mode-btn">编辑</button>
           <input type="date" id="historyDatePicker" class="history-date-picker" title="跳转到指定日期">
+        </div>
+        <div id="historyAddBar" class="add-bar hidden" style="margin-bottom:12px;">
+          <input type="text" id="historyAddInput" class="add-input" placeholder="添加到此日期..." maxlength="200" autocomplete="off">
+          <button id="historyAddBtn" class="btn btn-add">添加</button>
         </div>
         <div id="historyList" class="history-list"></div>
         <div id="historyEmpty" class="empty-state">

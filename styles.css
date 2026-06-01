@@ -738,6 +738,35 @@ input, button {
   background: var(--bg);
 }
 
+.history-add-to-date {
+  padding: 8px 0 4px;
+  border-top: 1px dashed var(--border);
+  margin-top: 4px;
+}
+
+.btn-small {
+  padding: 4px 10px;
+  font-size: 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-small:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: var(--primary-light);
+}
+
+#historyEditBtn.active {
+  background: var(--danger-light);
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
 .history-card-body .todo-row .txt {
   flex: 1;
   color: var(--text);
