@@ -379,6 +379,12 @@
       if (result.error) throw result.error;
     },
 
+    async deleteHabitLog(id) {
+      if (!supabase) return;
+      var result = await supabase.from('habit_logs').delete().eq('id', id);
+      if (result.error) throw result.error;
+    },
+
     async addHabitLog(log) {
       if (!supabase) return null;
       var payload = {
@@ -719,8 +725,10 @@
         '</div>' +
         '<div class="history-card-body">' +
           todos.map(function(t) {
-            return '<div class="todo-row">' +
-              '<div class="indicator ' + (t.done ? 'done' : 'undone') + '"></div>' +
+            return '<div class="todo-row" data-id="' + t.id + '">' +
+              '<button class="history-toggle-btn" data-action="history-toggle" title="切换完成状态">' +
+                '<div class="indicator ' + (t.done ? 'done' : 'undone') + '"></div>' +
+              '</button>' +
               '<span class="txt' + (t.done ? ' was-done' : '') + '">' + escapeHtml(t.text) + '</span>' +
               '</div>';
           }).join('') +
@@ -1385,8 +1393,23 @@
   }
 
   async function handleCheckHabit(habitId) {
-    if (isHabitDoneToday(habitId)) return;
-    var log = { id: generateId(), habitId: habitId, date: getToday(), done: true };
+    var today = getToday();
+    // If already done today, undo (cancel check-in)
+    if (isHabitDoneToday(habitId)) {
+      var existingLog = state.habitLogs.find(function(l) { return l.habitId === habitId && l.date === today && l.done; });
+      if (!existingLog) return;
+      try {
+        await HabitSync.deleteHabitLog(existingLog.id);
+        state.habitLogs = state.habitLogs.filter(function(l) { return l.id !== existingLog.id; });
+        renderHabits();
+        Toast.show('已取消打卡');
+      } catch (e) {
+        console.warn('Cancel check failed', e);
+        Toast.show('取消失败');
+      }
+      return;
+    }
+    var log = { id: generateId(), habitId: habitId, date: today, done: true };
     try {
       await HabitSync.addHabitLog(log);
       state.habitLogs.push(log);
@@ -1554,8 +1577,43 @@
     } catch (ex) { console.warn('Delete someday failed', ex); }
   });
 
-  // History card expand/collapse (only in collapse mode)
+  // History toggle todo done/undone
+  async function handleHistoryToggle(id) {
+    var todo = state.allTodos.find(function(t) { return t.id === id; });
+    if (!todo) return;
+    var newDone = !todo.done;
+    try {
+      await Sync.updateTodo(id, { done: newDone });
+      todo.done = newDone;
+      // If marking as DONE, delete any carry-over copies from later dates
+      if (newDone && todo.carriedFrom) {
+        // Find and delete copies that were carried from this todo's original date
+        var copiesToDelete = state.allTodos.filter(function(t) {
+          return t.carriedFrom === todo.date && t.text.trim().toLowerCase() === todo.text.trim().toLowerCase() && t.id !== todo.id;
+        });
+        for (var i = 0; i < copiesToDelete.length; i++) {
+          try { await Sync.deleteTodo(copiesToDelete[i].id); } catch (e) { /* ignore */ }
+          state.allTodos = state.allTodos.filter(function(t) { return t.id !== copiesToDelete[i].id; });
+        }
+      }
+      renderCurrentView();
+      saveLocalCache();
+    } catch (e) {
+      console.warn('History toggle failed', e);
+      Toast.show('操作失败');
+    }
+  }
+
+  // History card interactions
   document.getElementById('historyList').addEventListener('click', function(e) {
+    // History toggle button
+    var toggleBtn = e.target.closest('[data-action="history-toggle"]');
+    if (toggleBtn) {
+      var row = toggleBtn.closest('.todo-row');
+      if (row) handleHistoryToggle(row.dataset.id);
+      return;
+    }
+    // Card expand/collapse (only in collapse mode)
     if (state.historyMode !== 'collapse') return;
     var header = e.target.closest('.history-card-header');
     if (!header) return;
@@ -1657,7 +1715,7 @@
   // Habit add type toggle: hide config + change placeholder for ongoing mode
   document.getElementById('habitAddType').addEventListener('change', function() {
     var isOngoing = this.value === 'ongoing';
-    document.getElementById('habitConfigBtn').style.display = isOngoing ? 'none' : 'flex';
+    document.getElementById('habitConfigBtn').classList.toggle('hidden', isOngoing);
     document.getElementById('habitConfigPanel').classList.add('hidden');
     document.getElementById('habitInput').placeholder = isOngoing ? '添加持续任务...' : '添加新习惯...';
   });
