@@ -541,7 +541,8 @@
     statsYear: new Date().getFullYear(),
     modalDate: null,
     historyMode: 'collapse', // 'collapse' or 'expand'
-    historyEditMode: false
+    historyEditMode: false,
+    historyExpanded: {} // track which date cards are expanded
   };
 
   /* ==================================================================
@@ -724,7 +725,8 @@
         extraItems += '</div>';
       }
 
-      return '<div class="history-card' + (isExpanded ? ' expanded' : '') + '" data-date="' + date + '">' +
+      var cardExpanded = isExpanded || state.historyExpanded[date];
+      return '<div class="history-card' + (cardExpanded ? ' expanded' : '') + '" data-date="' + date + '">' +
         '<div class="history-card-header">' +
           '<div class="date-info">' +
             '<div class="date-label">' + formatDateShort(date) + '</div>' +
@@ -912,9 +914,8 @@
         '<div class="habit-progress-bar">' +
           '<div class="habit-progress-fill" style="width:' + progress.pct + '%"></div>' +
         '</div>' +
-        '<button class="habit-check-btn' + (doneToday ? ' checked' : '') + '" data-action="check-habit"' +
-          (doneToday ? ' disabled' : '') + '>' +
-          (doneToday ? '今日已打卡 ✓' : '打卡') +
+        '<button class="habit-check-btn' + (doneToday ? ' checked' : '') + '" data-action="check-habit">' +
+          (doneToday ? '今日已打卡 ✓（再点取消）' : '打卡') +
         '</button>' +
       '</div>';
     }
@@ -1650,6 +1651,13 @@
     if (!header) return;
     var card = header.parentElement;
     card.classList.toggle('expanded');
+    // Track expanded state so it survives re-renders
+    var date = card.dataset.date;
+    if (card.classList.contains('expanded')) {
+      state.historyExpanded[date] = true;
+    } else {
+      delete state.historyExpanded[date];
+    }
   });
 
   // History edit toggle
@@ -1696,6 +1704,7 @@
   document.getElementById('modeCollapse').addEventListener('click', function() {
     if (state.historyMode === 'collapse') return;
     state.historyMode = 'collapse';
+    state.historyExpanded = {};
     document.getElementById('modeCollapse').classList.add('active');
     document.getElementById('modeExpand').classList.remove('active');
     renderHistory();
