@@ -908,7 +908,7 @@
           '</button>' +
         '</div>' +
         '<div class="habit-meta">' +
-          '<span>' + periodLabel + ' · 目标' + h.totalLength + '次 · 从' + formatDateShort(h.startDate) + '开始</span>' +
+          '<span>' + periodLabel + ' · 目标' + h.totalLength + '次 · 从' + formatDate(h.startDate) + '开始</span>' +
           '<span>已完成 ' + progress.done + ' / ' + progress.total + '</span>' +
         '</div>' +
         '<div class="habit-progress-bar">' +
@@ -932,7 +932,7 @@
           '</button>' +
         '</div>' +
         '<div class="habit-meta">' +
-          '<span>自由打卡 · 从' + formatDateShort(ot.date) + '开始</span>' +
+          '<span>自由打卡 · 从' + formatDate(ot.date) + '开始</span>' +
           '<span>已做 ' + (ot.ongoingCount || 0) + ' 天</span>' +
         '</div>' +
         '<div class="habit-progress-bar">' +
