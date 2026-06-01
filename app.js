@@ -915,7 +915,7 @@
           '<div class="habit-progress-fill" style="width:' + progress.pct + '%"></div>' +
         '</div>' +
         '<button class="habit-check-btn' + (doneToday ? ' checked' : '') + '" data-action="check-habit">' +
-          (doneToday ? '今日已打卡 ✓（再点取消）' : '打卡') +
+          (doneToday ? '今日已打卡 ✓' : '打卡') +
         '</button>' +
       '</div>';
     }
@@ -940,8 +940,7 @@
         '</div>' +
         (ot.lastOngoingDate === today && ot.lastOngoingNote ?
           '<div class="ongoing-note-display">' + escapeHtml(ot.lastOngoingNote) + '</div>' : '') +
-        '<button class="habit-check-btn ongoing-check-btn' + (otdoneToday ? ' checked' : '') + '" data-action="check-ongoing"' +
-          (otdoneToday ? ' disabled' : '') + '>' +
+        '<button class="habit-check-btn ongoing-check-btn' + (otdoneToday ? ' checked' : '') + '" data-action="check-ongoing">' +
           (otdoneToday ? '今日已打卡 ✓' : '打卡+1') +
         '</button>' +
       '</div>';
@@ -1366,12 +1365,31 @@
     var todo = state.allTodos.find(function(t) { return t.id === id; });
     if (!todo || todo.taskType !== 'ongoing') return;
     var today = getToday();
+    // If already done today, undo
     if (todo.lastOngoingDate === today) {
-      Toast.show('今天已经打卡过了');
+      var prevCount = Math.max((todo.ongoingCount || 1) - 1, 0);
+      try {
+        await Sync.updateTodo(id, {
+          ongoingCount: prevCount,
+          lastOngoingDate: null,
+          lastOngoingNote: ''
+        });
+        todo.ongoingCount = prevCount;
+        todo.lastOngoingDate = null;
+        todo.lastOngoingNote = '';
+        renderCurrentView();
+        if (state.modalDate) renderModalList();
+        renderHabits();
+        saveLocalCache();
+        Toast.show('已取消打卡');
+      } catch (e) {
+        console.warn('Undo ongoing failed', e);
+        Toast.show('取消失败');
+      }
       return;
     }
     var note = prompt('今天做了什么？（可选，简短记录）', '');
-    if (note === null) return; // cancelled
+    if (note === null) return;
     var newCount = (todo.ongoingCount || 0) + 1;
     try {
       await Sync.updateTodo(id, {
@@ -1384,6 +1402,7 @@
       todo.lastOngoingNote = note || '';
       renderCurrentView();
       if (state.modalDate) renderModalList();
+      renderHabits();
       saveLocalCache();
       Toast.show('已打卡！累计' + newCount + '天');
     } catch (e) {
