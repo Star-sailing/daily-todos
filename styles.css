@@ -313,13 +313,42 @@ input, button {
 
 .todo-item {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
   padding: 12px 14px;
   background: var(--surface);
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow);
   transition: opacity 0.2s, transform 0.2s;
+}
+
+.todo-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.todo-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.todo-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.todo-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 
 .todo-item.removing {
@@ -698,6 +727,33 @@ input, button {
   color: var(--text-muted);
 }
 
+.history-extra {
+  border-top: 1px dashed var(--border);
+  margin-top: 6px;
+  padding-top: 6px;
+}
+
+.history-card-body .todo-row .indicator.ongoing {
+  background: var(--primary);
+  width: 8px;
+  height: 8px;
+  border-radius: 3px;
+}
+
+.history-card-body .todo-row .indicator.habit {
+  background: var(--green);
+  width: 8px;
+  height: 8px;
+  border-radius: 3px;
+}
+
+.todo-badge.ongoing-note {
+  background: #EEF2FF;
+  color: var(--primary);
+  font-style: italic;
+  font-size: 11px;
+}
+
 /* ============================
    Calendar View
    ============================ */
@@ -936,6 +992,43 @@ input, button {
 /* ============================
    Habits Tab
    ============================ */
+.habit-config {
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.habit-config.hidden { display: none; }
+
+.config-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.config-row label {
+  width: 56px;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.config-row select,
+.config-row input {
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 13px;
+  background: var(--bg);
+  color: var(--text);
+}
+
 .habits-list {
   display: flex;
   flex-direction: column;

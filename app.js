@@ -161,7 +161,8 @@
           hasDeadline: t.has_deadline || false,
           taskType: t.task_type || 'todo',
           ongoingCount: t.ongoing_count || 0,
-          lastOngoingDate: t.last_ongoing_date || null
+          lastOngoingDate: t.last_ongoing_date || null,
+          lastOngoingNote: t.last_ongoing_note || ''
         };
       });
     },
@@ -184,6 +185,7 @@
       if (todo.taskType !== undefined && todo.taskType !== 'todo') payload.task_type = todo.taskType;
       if (todo.ongoingCount !== undefined) payload.ongoing_count = todo.ongoingCount;
       if (todo.lastOngoingDate !== undefined) payload.last_ongoing_date = todo.lastOngoingDate;
+      if (todo.lastOngoingNote !== undefined) payload.last_ongoing_note = todo.lastOngoingNote;
       var result = await supabase.from('todos').insert(payload);
       if (result.error) {
         // If columns don't exist, retry without them (silent — expected until DB migration)
@@ -195,6 +197,7 @@
           delete payload.task_type;
           delete payload.ongoing_count;
           delete payload.last_ongoing_date;
+          delete payload.last_ongoing_note;
           result = await supabase.from('todos').insert(payload);
           if (result.error) throw result.error;
           return todo;
@@ -225,6 +228,7 @@
       if (changes.taskType !== undefined) payload.task_type = changes.taskType;
       if (changes.ongoingCount !== undefined) payload.ongoing_count = changes.ongoingCount;
       if (changes.lastOngoingDate !== undefined) payload.last_ongoing_date = changes.lastOngoingDate;
+      if (changes.lastOngoingNote !== undefined) payload.last_ongoing_note = changes.lastOngoingNote;
       var result = await supabase.from('todos').update(payload).eq('id', id);
       if (result.error) {
         // If columns don't exist, retry without them (silent — expected until DB migration)
@@ -236,6 +240,7 @@
           delete payload.task_type;
           delete payload.ongoing_count;
           delete payload.last_ongoing_date;
+          delete payload.last_ongoing_note;
           result = await supabase.from('todos').update(payload).eq('id', id);
           if (result.error) throw result.error;
           return;
@@ -588,36 +593,51 @@
         }
       }
       var isOngoing = t.taskType === 'ongoing';
-      if (isOngoing) {
-        classes += ' ongoing';
+      if (isOngoing) classes += ' ongoing';
+      var badgesHtml = '';
+      if (!isOngoing) {
+        badgesHtml += deadlineBadge;
+        if (t.carriedFrom) badgesHtml += '<span class="todo-badge">从' + formatDateShort(t.carriedFrom) + '开始，已拖' + daysBetween(t.carriedFrom, getToday()) + '天</span>';
       }
       if (isOngoing) {
         return '<div class="' + classes + '" data-id="' + t.id + '">' +
           '<button class="ongoing-btn" data-action="increment" title="打卡+1">+1</button>' +
-          '<span class="todo-text">' + escapeHtml(t.text) + '</span>' +
-          (t.ongoingCount ? '<span class="todo-badge ongoing-count">已做' + t.ongoingCount + '天</span>' : '') +
-          '<button class="todo-delete" data-action="delete" aria-label="删除">' +
-            '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
-          '</button>' +
+          '<div class="todo-body">' +
+            '<div class="todo-top">' +
+              '<span class="todo-text">' + escapeHtml(t.text) + '</span>' +
+              '<div class="todo-actions">' +
+                '<button class="todo-delete" data-action="delete" aria-label="删除">' +
+                  '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+                '</button>' +
+              '</div>' +
+            '</div>' +
+            (t.ongoingCount ? '<div class="todo-badges"><span class="todo-badge ongoing-count">已做' + t.ongoingCount + '天</span></div>' : '') +
+            (t.lastOngoingDate === getToday() && t.lastOngoingNote ? '<div class="todo-badges"><span class="todo-badge ongoing-note">' + escapeHtml(t.lastOngoingNote) + '</span></div>' : '') +
+          '</div>' +
         '</div>';
       }
       return '<div class="' + classes + '" data-id="' + t.id + '">' +
         '<div class="todo-check' + (t.done ? ' done' : '') + '" data-action="toggle"></div>' +
-        '<span class="todo-text' + (t.done ? ' done' : '') + '">' + escapeHtml(t.text) + '</span>' +
-        deadlineBadge +
-        (t.carriedFrom ? '<span class="todo-badge">从' + formatDateShort(t.carriedFrom) + '开始，已拖' + daysBetween(t.carriedFrom, getToday()) + '天</span>' : '') +
-        '<button class="todo-action-btn" data-action="pin" title="' + (t.pinned ? '取消置顶' : '置顶') + '">' +
-          '<svg width="14" height="14" viewBox="0 0 24 24" fill="' + (t.pinned ? '#4A6CF7' : 'none') + '" stroke="' + (t.pinned ? '#4A6CF7' : '#9CA3AF') + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 00-1.11-1.79l-1.78-.9A2 2 0 0115 10.76V6h1a2 2 0 000-4H8a2 2 0 000 4h1v4.76a2 2 0 01-1.11 1.79l-1.78.9A2 2 0 005 15.24Z"/></svg>' +
-        '</button>' +
-        '<button class="todo-action-btn" data-action="highlight" title="' + (t.highlighted ? '取消高亮' : '高亮') + '">' +
-          '<svg width="14" height="14" viewBox="0 0 24 24" fill="' + (t.highlighted ? '#F59E0B' : 'none') + '" stroke="' + (t.highlighted ? '#F59E0B' : '#9CA3AF') + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>' +
-        '</button>' +
-        '<button class="todo-action-btn" data-action="deadline" title="' + (t.hasDeadline ? '修改截止日期' : '设置截止日期') + '">' +
-          '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="' + (t.hasDeadline ? '#EF4444' : '#9CA3AF') + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>' +
-        '</button>' +
-        '<button class="todo-delete" data-action="delete" aria-label="删除">' +
-          '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
-        '</button>' +
+        '<div class="todo-body">' +
+          '<div class="todo-top">' +
+            '<span class="todo-text' + (t.done ? ' done' : '') + '">' + escapeHtml(t.text) + '</span>' +
+            '<div class="todo-actions">' +
+              '<button class="todo-action-btn" data-action="pin" title="' + (t.pinned ? '取消置顶' : '置顶') + '">' +
+                '<svg width="14" height="14" viewBox="0 0 24 24" fill="' + (t.pinned ? '#4A6CF7' : 'none') + '" stroke="' + (t.pinned ? '#4A6CF7' : '#9CA3AF') + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 00-1.11-1.79l-1.78-.9A2 2 0 0115 10.76V6h1a2 2 0 000-4H8a2 2 0 000 4h1v4.76a2 2 0 01-1.11 1.79l-1.78.9A2 2 0 005 15.24Z"/></svg>' +
+              '</button>' +
+              '<button class="todo-action-btn" data-action="highlight" title="' + (t.highlighted ? '取消高亮' : '高亮') + '">' +
+                '<svg width="14" height="14" viewBox="0 0 24 24" fill="' + (t.highlighted ? '#F59E0B' : 'none') + '" stroke="' + (t.highlighted ? '#F59E0B' : '#9CA3AF') + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>' +
+              '</button>' +
+              '<button class="todo-action-btn" data-action="deadline" title="' + (t.hasDeadline ? '修改截止日期' : '设置截止日期') + '">' +
+                '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="' + (t.hasDeadline ? '#EF4444' : '#9CA3AF') + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>' +
+              '</button>' +
+              '<button class="todo-delete" data-action="delete" aria-label="删除">' +
+                '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+              '</button>' +
+            '</div>' +
+          '</div>' +
+          (badgesHtml ? '<div class="todo-badges">' + badgesHtml + '</div>' : '') +
+        '</div>' +
       '</div>';
     }).join('');
   }
@@ -656,6 +676,32 @@
       var total = todos.length;
       var pct = Math.round((doneCount / total) * 100);
 
+      // Ongoing tasks active on this date
+      var ongoingOnDate = state.allTodos.filter(function(t) {
+        return t.taskType === 'ongoing' && t.lastOngoingDate === date;
+      });
+
+      // Habit check-ins on this date
+      var habitsOnDate = state.habitLogs.filter(function(l) {
+        return l.date === date && l.done;
+      }).map(function(l) {
+        var h = state.habits.find(function(hb) { return hb.id === l.habitId; });
+        return h ? h.content : null;
+      }).filter(Boolean);
+
+      var extraItems = '';
+      if (ongoingOnDate.length > 0 || habitsOnDate.length > 0) {
+        extraItems = '<div class="history-extra">';
+        for (var oi = 0; oi < ongoingOnDate.length; oi++) {
+          var ot = ongoingOnDate[oi];
+          extraItems += '<div class="todo-row ongoing-row"><div class="indicator ongoing"></div><span class="txt">' + escapeHtml(ot.text) + (ot.lastOngoingNote ? ' — ' + escapeHtml(ot.lastOngoingNote) : '') + '</span></div>';
+        }
+        for (var hi = 0; hi < habitsOnDate.length; hi++) {
+          extraItems += '<div class="todo-row habit-row"><div class="indicator habit"></div><span class="txt">打卡: ' + escapeHtml(habitsOnDate[hi]) + '</span></div>';
+        }
+        extraItems += '</div>';
+      }
+
       return '<div class="history-card' + (isExpanded ? ' expanded' : '') + '" data-date="' + date + '">' +
         '<div class="history-card-header">' +
           '<div class="date-info">' +
@@ -675,6 +721,7 @@
               '<span class="txt' + (t.done ? ' was-done' : '') + '">' + escapeHtml(t.text) + '</span>' +
               '</div>';
           }).join('') +
+          extraItems +
         '</div>' +
       '</div>';
     }).join('');
@@ -892,40 +939,58 @@
           deadlineBadge = '<span class="todo-badge deadline-countdown">剩余' + remaining + '天</span>';
         }
       }
+      var badgesHtml = '';
+      if (!isOngoing) {
+        badgesHtml += deadlineBadge;
+        if (t.carriedFrom) badgesHtml += '<span class="todo-badge">从' + formatDateShort(t.carriedFrom) + '开始，已拖' + daysBetween(t.carriedFrom, getToday()) + '天</span>';
+      }
       var html = '<div class="' + cls + '" data-id="' + t.id + '">';
       if (isOngoing) {
-        html += '<button class="ongoing-btn" data-action="increment" title="打卡+1">+1</button>';
-        html += '<span class="todo-text">' + escapeHtml(t.text) + '</span>';
-        if (t.ongoingCount) html += '<span class="todo-badge ongoing-count">已做' + t.ongoingCount + '天</span>';
-        if (isEditable) {
-          html += '<button class="todo-delete" data-action="delete" aria-label="删除">' +
-            '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
-          '</button>';
-        }
+        html += '<button class="ongoing-btn" data-action="increment" title="打卡+1">+1</button>' +
+          '<div class="todo-body">' +
+            '<div class="todo-top">' +
+              '<span class="todo-text">' + escapeHtml(t.text) + '</span>' +
+              (isEditable ? '<div class="todo-actions">' +
+                '<button class="todo-delete" data-action="delete" aria-label="删除">' +
+                  '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+                '</button>' +
+              '</div>' : '') +
+            '</div>' +
+            (t.ongoingCount ? '<div class="todo-badges"><span class="todo-badge ongoing-count">已做' + t.ongoingCount + '天</span></div>' : '') +
+            (t.lastOngoingDate === today && t.lastOngoingNote ? '<div class="todo-badges"><span class="todo-badge ongoing-note">' + escapeHtml(t.lastOngoingNote) + '</span></div>' : '') +
+          '</div>';
       } else if (isEditable) {
-        html += '<div class="todo-check' + (t.done ? ' done' : '') + '" data-action="toggle"></div>';
-        html += '<span class="todo-text' + (t.done ? ' done' : '') + '">' + escapeHtml(t.text) + '</span>';
-        html += deadlineBadge;
-        if (t.carriedFrom) html += '<span class="todo-badge">从' + formatDateShort(t.carriedFrom) + '开始，已拖' + daysBetween(t.carriedFrom, getToday()) + '天</span>';
-        html += '<button class="todo-action-btn" data-action="pin" title="' + (t.pinned ? '取消置顶' : '置顶') + '">' +
-          '<svg width="14" height="14" viewBox="0 0 24 24" fill="' + (t.pinned ? '#4A6CF7' : 'none') + '" stroke="' + (t.pinned ? '#4A6CF7' : '#9CA3AF') + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 00-1.11-1.79l-1.78-.9A2 2 0 0115 10.76V6h1a2 2 0 000-4H8a2 2 0 000 4h1v4.76a2 2 0 01-1.11 1.79l-1.78.9A2 2 0 005 15.24Z"/></svg>' +
-        '</button>' +
-        '<button class="todo-action-btn" data-action="highlight" title="' + (t.highlighted ? '取消高亮' : '高亮') + '">' +
-          '<svg width="14" height="14" viewBox="0 0 24 24" fill="' + (t.highlighted ? '#F59E0B' : 'none') + '" stroke="' + (t.highlighted ? '#F59E0B' : '#9CA3AF') + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>' +
-        '</button>' +
-        '<button class="todo-action-btn" data-action="deadline" title="' + (t.hasDeadline ? '修改截止日期' : '设置截止日期') + '">' +
-          '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="' + (t.hasDeadline ? '#EF4444' : '#9CA3AF') + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>' +
-        '</button>' +
-        '<button class="todo-delete" data-action="delete" aria-label="删除">' +
-          '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
-        '</button>';
+        html += '<div class="todo-check' + (t.done ? ' done' : '') + '" data-action="toggle"></div>' +
+          '<div class="todo-body">' +
+            '<div class="todo-top">' +
+              '<span class="todo-text' + (t.done ? ' done' : '') + '">' + escapeHtml(t.text) + '</span>' +
+              '<div class="todo-actions">' +
+                '<button class="todo-action-btn" data-action="pin" title="' + (t.pinned ? '取消置顶' : '置顶') + '">' +
+                  '<svg width="14" height="14" viewBox="0 0 24 24" fill="' + (t.pinned ? '#4A6CF7' : 'none') + '" stroke="' + (t.pinned ? '#4A6CF7' : '#9CA3AF') + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 00-1.11-1.79l-1.78-.9A2 2 0 0115 10.76V6h1a2 2 0 000-4H8a2 2 0 000 4h1v4.76a2 2 0 01-1.11 1.79l-1.78.9A2 2 0 005 15.24Z"/></svg>' +
+                '</button>' +
+                '<button class="todo-action-btn" data-action="highlight" title="' + (t.highlighted ? '取消高亮' : '高亮') + '">' +
+                  '<svg width="14" height="14" viewBox="0 0 24 24" fill="' + (t.highlighted ? '#F59E0B' : 'none') + '" stroke="' + (t.highlighted ? '#F59E0B' : '#9CA3AF') + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>' +
+                '</button>' +
+                '<button class="todo-action-btn" data-action="deadline" title="' + (t.hasDeadline ? '修改截止日期' : '设置截止日期') + '">' +
+                  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="' + (t.hasDeadline ? '#EF4444' : '#9CA3AF') + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>' +
+                '</button>' +
+                '<button class="todo-delete" data-action="delete" aria-label="删除">' +
+                  '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+                '</button>' +
+              '</div>' +
+            '</div>' +
+            (badgesHtml ? '<div class="todo-badges">' + badgesHtml + '</div>' : '') +
+          '</div>';
       } else {
-        html += '<div class="indicator ' + (t.done ? 'done' : 'undone') + '" style="width:10px;height:10px;border-radius:50%;flex-shrink:0;background:' + (t.done ? 'var(--green)' : 'var(--orange)') + '"></div>';
-        html += '<span class="todo-text' + (t.done ? ' done' : '') + '">' + escapeHtml(t.text) + '</span>';
-        html += deadlineBadge;
-        if (t.carriedFrom) html += '<span class="todo-badge">从' + formatDateShort(t.carriedFrom) + '开始，已拖' + daysBetween(t.carriedFrom, getToday()) + '天</span>';
-        if (t.pinned) html += '<span class="todo-badge">已置顶</span>';
-        if (t.highlighted) html += '<span class="todo-badge">已高亮</span>';
+        html += '<div class="indicator ' + (t.done ? 'done' : 'undone') + '" style="width:10px;height:10px;border-radius:50%;flex-shrink:0;background:' + (t.done ? 'var(--green)' : 'var(--orange)') + '"></div>' +
+          '<div class="todo-body">' +
+            '<div class="todo-top">' +
+              '<span class="todo-text' + (t.done ? ' done' : '') + '">' + escapeHtml(t.text) + '</span>' +
+            '</div>' +
+            (badgesHtml ? '<div class="todo-badges">' + badgesHtml + '</div>' : '') +
+            (t.pinned ? '<div class="todo-badges"><span class="todo-badge">已置顶</span></div>' : '') +
+            (t.highlighted ? '<div class="todo-badges"><span class="todo-badge">已高亮</span></div>' : '') +
+          '</div>';
       }
       html += '</div>';
       return html;
@@ -991,7 +1056,8 @@
       hasDeadline: false,
       taskType: 'todo',
       ongoingCount: 0,
-      lastOngoingDate: null
+      lastOngoingDate: null,
+      lastOngoingNote: ''
     };
     try {
       await Sync.addTodo(todo);
@@ -1150,11 +1216,18 @@
       Toast.show('今天已经打卡过了');
       return;
     }
+    var note = prompt('今天做了什么？（可选，简短记录）', '');
+    if (note === null) return; // cancelled
     var newCount = (todo.ongoingCount || 0) + 1;
     try {
-      await Sync.updateTodo(id, { ongoingCount: newCount, lastOngoingDate: today });
+      await Sync.updateTodo(id, {
+        ongoingCount: newCount,
+        lastOngoingDate: today,
+        lastOngoingNote: note || ''
+      });
       todo.ongoingCount = newCount;
       todo.lastOngoingDate = today;
+      todo.lastOngoingNote = note || '';
       renderCurrentView();
       if (state.modalDate) renderModalList();
       saveLocalCache();
@@ -1407,21 +1480,31 @@
     else if (action.dataset.action === 'delete-habit') handleDeleteHabit(habitId);
   });
 
-  // Habit add
+  // Habit config toggle
+  document.getElementById('habitConfigBtn').addEventListener('click', function() {
+    var panel = document.getElementById('habitConfigPanel');
+    panel.classList.toggle('hidden');
+  });
+
+  // Init habit start date
+  document.getElementById('habitStartDate').value = getToday();
+
+  // Habit add — read config values
   document.getElementById('habitAddBtn').addEventListener('click', function() {
     var input = document.getElementById('habitInput');
     var text = input.value.trim();
     if (!text) return;
     input.value = '';
-    handleAddHabit(text, 'daily', 1, 30, getToday());
+    var periodType = document.getElementById('habitPeriodType').value;
+    var periodCount = parseInt(document.getElementById('habitPeriodCount').value) || 1;
+    var totalLength = parseInt(document.getElementById('habitTotalLength').value) || 30;
+    var startDate = document.getElementById('habitStartDate').value || getToday();
+    handleAddHabit(text, periodType, periodCount, totalLength, startDate);
   });
 
   document.getElementById('habitInput').addEventListener('keydown', function(e) {
     if (e.key === 'Enter') {
-      var text = this.value.trim();
-      if (!text) return;
-      this.value = '';
-      handleAddHabit(text, 'daily', 1, 30, getToday());
+      document.getElementById('habitAddBtn').click();
     }
   });
 
