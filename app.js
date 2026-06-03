@@ -476,9 +476,21 @@
 
     var undoneOlder = [];
     for (var i = 0; i < todos.length; i++) {
-      // Only carry ORIGINAL todos (not intermediate carry-over copies), exclude ongoing
-      if (todos[i].date < today && !todos[i].done && !todos[i].carriedFrom && todos[i].taskType !== 'ongoing') {
-        undoneOlder.push(todos[i]);
+      // Only carry ORIGINAL todos, exclude ongoing and someday
+      if (todos[i].date < today && !todos[i].done && !todos[i].carriedFrom && todos[i].taskType !== 'ongoing' && todos[i].taskType !== 'someday') {
+        // Check if any carry-over copy of this original was marked done on a later date
+        var origText = todos[i].text.trim().toLowerCase();
+        var hasDoneCopy = false;
+        for (var k = 0; k < todos.length; k++) {
+          if (todos[k].done && todos[k].date > todos[i].date &&
+              todos[k].text.trim().toLowerCase() === origText &&
+              (todos[k].carriedFrom === todos[i].date || todos[k].date === todos[i].date)) {
+            hasDoneCopy = true; break;
+          }
+        }
+        if (!hasDoneCopy) {
+          undoneOlder.push(todos[i]);
+        }
       }
     }
 
@@ -511,7 +523,12 @@
         date: today,
         createdAt: new Date().toISOString(),
         carriedFrom: todo.date,
-        order: newOrder++
+        order: newOrder++,
+        // Preserve deadline from original
+        deadline: todo.deadline || null,
+        hasDeadline: todo.hasDeadline || false,
+        pinned: false,
+        highlighted: false
       };
       newTodos.push(newTodo);
       todayTexts.add(norm);
@@ -599,11 +616,11 @@
       if (t.hasDeadline && t.deadline) {
         var remaining = daysBetween(getToday(), t.deadline);
         if (remaining < 0) {
-          deadlineBadge = '<span class="todo-badge deadline-overdue">已逾期' + Math.abs(remaining) + '天</span>';
+          deadlineBadge = '<span class="todo-badge deadline-overdue" data-action="cancel-deadline" title="点击取消"'>已逾期' + Math.abs(remaining) + '天</span>';
         } else if (remaining === 0) {
-          deadlineBadge = '<span class="todo-badge deadline-today">今天截止</span>';
+          deadlineBadge = '<span class="todo-badge deadline-today" data-action="cancel-deadline" title="点击取消"'>今天截止</span>';
         } else {
-          deadlineBadge = '<span class="todo-badge deadline-countdown">剩余' + remaining + '天</span>';
+          deadlineBadge = '<span class="todo-badge deadline-countdown" data-action="cancel-deadline" title="点击取消"'>剩余' + remaining + '天</span>';
         }
       }
       var isOngoing = t.taskType === 'ongoing';
@@ -1029,6 +1046,8 @@
 
   function showHabitReminder() {
     var today = getToday();
+    var lastReminder = localStorage.getItem('todoapp_last_habit_reminder');
+    if (lastReminder === today) return;
     var unchecked = [];
     for (var i = 0; i < state.habits.length; i++) {
       if (!isHabitDoneToday(state.habits[i].id)) unchecked.push(state.habits[i]);
@@ -1036,6 +1055,7 @@
     if (unchecked.length === 0) return;
     var names = unchecked.map(function(h) { return h.content; }).join('、');
     Toast.show('今日未打卡: ' + names, 4000);
+    localStorage.setItem('todoapp_last_habit_reminder', today);
   }
 
   // -- Modal --
@@ -1103,11 +1123,11 @@
       if (t.hasDeadline && t.deadline) {
         var remaining = daysBetween(getToday(), t.deadline);
         if (remaining < 0) {
-          deadlineBadge = '<span class="todo-badge deadline-overdue">已逾期' + Math.abs(remaining) + '天</span>';
+          deadlineBadge = '<span class="todo-badge deadline-overdue" data-action="cancel-deadline" title="点击取消"'>已逾期' + Math.abs(remaining) + '天</span>';
         } else if (remaining === 0) {
-          deadlineBadge = '<span class="todo-badge deadline-today">今天截止</span>';
+          deadlineBadge = '<span class="todo-badge deadline-today" data-action="cancel-deadline" title="点击取消"'>今天截止</span>';
         } else {
-          deadlineBadge = '<span class="todo-badge deadline-countdown">剩余' + remaining + '天</span>';
+          deadlineBadge = '<span class="todo-badge deadline-countdown" data-action="cancel-deadline" title="点击取消"'>剩余' + remaining + '天</span>';
         }
       }
       var badgesHtml = '';
@@ -1352,30 +1372,36 @@
   function handleDeadlineClick(id) {
     var todo = state.allTodos.find(function(t) { return t.id === id; });
     if (!todo) return;
-    var input = document.createElement('input');
-    input.type = 'date';
-    input.value = todo.deadline || '';
-    input.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;pointer-events:none;';
-    document.body.appendChild(input);
-    var cleanup = function() {
-      if (document.body.contains(input)) document.body.removeChild(input);
-    };
-    input.addEventListener('change', function() {
-      var val = input.value;
-      cleanup();
-      if (val) {
-        handleSetDeadline(id, val);
-      } else {
-        handleSetDeadline(id, null);
+    // If already has deadline, offer to cancel or change
+    if (todo.hasDeadline && todo.deadline) {
+      var choice = prompt('截止日期: ' + todo.deadline + '\n输入新日期修改，输入"取消"移除截止日期，留空不变', todo.deadline);
+      if (choice === null) return;
+      if (choice.trim().toLowerCase() === '取消' || choice.trim() === '') {
+        // Cancel: blank means cancel too (but distinguish from "don't change")
+        if (choice.trim().toLowerCase() === '取消') {
+          handleSetDeadline(id, null);
+          return;
+        }
+        // blank = no change
+        return;
       }
-    });
-    input.addEventListener('blur', function() {
-      setTimeout(function() {
-        if (document.body.contains(input)) cleanup();
-      }, 300);
-    });
-    try { if (typeof input.showPicker === 'function') input.showPicker(); } catch (ex) { /* fallback */ }
-    input.focus();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(choice.trim())) {
+        handleSetDeadline(id, choice.trim());
+      }
+      return;
+    }
+    // No deadline set — use prompt for simplicity and cross-platform reliability
+    var val = prompt('设置截止日期 (YYYY-MM-DD):', getToday());
+    if (val === null) return;
+    if (val.trim() === '') {
+      handleSetDeadline(id, null);
+      return;
+    }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(val.trim())) {
+      handleSetDeadline(id, val.trim());
+    } else {
+      Toast.show('日期格式错误，请使用 YYYY-MM-DD');
+    }
   }
 
   // Increment ongoing task
@@ -1604,6 +1630,7 @@
     else if (action.dataset.action === 'pin') handlePin(id);
     else if (action.dataset.action === 'highlight') handleHighlight(id);
     else if (action.dataset.action === 'deadline') handleDeadlineClick(id);
+    else if (action.dataset.action === 'cancel-deadline') handleSetDeadline(id, null);
     else if (action.dataset.action === 'increment') handleIncrementOngoing(id);
   });
 
@@ -2026,6 +2053,7 @@
     else if (action.dataset.action === 'pin') handlePin(id);
     else if (action.dataset.action === 'highlight') handleHighlight(id);
     else if (action.dataset.action === 'deadline') handleDeadlineClick(id);
+    else if (action.dataset.action === 'cancel-deadline') handleSetDeadline(id, null);
     else if (action.dataset.action === 'increment') handleIncrementOngoing(id);
   });
 

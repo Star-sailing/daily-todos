@@ -477,6 +477,10 @@ input, button {
   border-radius: 4px;
 }
 
+.todo-badge[data-action="cancel-deadline"] {
+  cursor: pointer;
+}
+
 .todo-delete {
   flex-shrink: 0;
   width: 28px;
