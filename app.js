@@ -616,11 +616,11 @@
       if (t.hasDeadline && t.deadline) {
         var remaining = daysBetween(getToday(), t.deadline);
         if (remaining < 0) {
-          deadlineBadge = '<span class="todo-badge deadline-overdue" data-action="cancel-deadline" title="点击取消"'>已逾期' + Math.abs(remaining) + '天</span>';
+          deadlineBadge = '<span class="todo-badge deadline-overdue" data-action="cancel-deadline" title="点击取消">已逾期' + Math.abs(remaining) + '天</span>';
         } else if (remaining === 0) {
-          deadlineBadge = '<span class="todo-badge deadline-today" data-action="cancel-deadline" title="点击取消"'>今天截止</span>';
+          deadlineBadge = '<span class="todo-badge deadline-today" data-action="cancel-deadline" title="点击取消">今天截止</span>';
         } else {
-          deadlineBadge = '<span class="todo-badge deadline-countdown" data-action="cancel-deadline" title="点击取消"'>剩余' + remaining + '天</span>';
+          deadlineBadge = '<span class="todo-badge deadline-countdown" data-action="cancel-deadline" title="点击取消">剩余' + remaining + '天</span>';
         }
       }
       var isOngoing = t.taskType === 'ongoing';
@@ -1123,11 +1123,11 @@
       if (t.hasDeadline && t.deadline) {
         var remaining = daysBetween(getToday(), t.deadline);
         if (remaining < 0) {
-          deadlineBadge = '<span class="todo-badge deadline-overdue" data-action="cancel-deadline" title="点击取消"'>已逾期' + Math.abs(remaining) + '天</span>';
+          deadlineBadge = '<span class="todo-badge deadline-overdue" data-action="cancel-deadline" title="点击取消">已逾期' + Math.abs(remaining) + '天</span>';
         } else if (remaining === 0) {
-          deadlineBadge = '<span class="todo-badge deadline-today" data-action="cancel-deadline" title="点击取消"'>今天截止</span>';
+          deadlineBadge = '<span class="todo-badge deadline-today" data-action="cancel-deadline" title="点击取消">今天截止</span>';
         } else {
-          deadlineBadge = '<span class="todo-badge deadline-countdown" data-action="cancel-deadline" title="点击取消"'>剩余' + remaining + '天</span>';
+          deadlineBadge = '<span class="todo-badge deadline-countdown" data-action="cancel-deadline" title="点击取消">剩余' + remaining + '天</span>';
         }
       }
       var badgesHtml = '';
