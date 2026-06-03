@@ -470,6 +470,19 @@
     return max;
   }
 
+  function normalizeTodoText(text) {
+    return (text || '').trim().toLowerCase();
+  }
+
+  function getCarryRootDate(todo) {
+    return todo.carriedFrom || todo.date;
+  }
+
+  function isSameCarryChain(a, b) {
+    return normalizeTodoText(a.text) === normalizeTodoText(b.text) &&
+      getCarryRootDate(a) === getCarryRootDate(b);
+  }
+
   async function runCarryOver(todos) {
     var today = getToday();
     if (localCache.lastActiveDate === today) return todos;
@@ -479,12 +492,12 @@
       // Only carry ORIGINAL todos, exclude ongoing and someday
       if (todos[i].date < today && !todos[i].done && !todos[i].carriedFrom && todos[i].taskType !== 'ongoing' && todos[i].taskType !== 'someday') {
         // Check if any carry-over copy of this original was marked done on a later date
-        var origText = todos[i].text.trim().toLowerCase();
+        var origText = normalizeTodoText(todos[i].text);
         var hasDoneCopy = false;
         for (var k = 0; k < todos.length; k++) {
           if (todos[k].done && todos[k].date > todos[i].date &&
-              todos[k].text.trim().toLowerCase() === origText &&
-              (todos[k].carriedFrom === todos[i].date || todos[k].date === todos[i].date)) {
+              normalizeTodoText(todos[k].text) === origText &&
+              getCarryRootDate(todos[k]) === todos[i].date) {
             hasDoneCopy = true; break;
           }
         }
@@ -504,7 +517,7 @@
     var todayTexts = new Set();
     for (var j = 0; j < todos.length; j++) {
       if (todos[j].date === today) {
-        todayTexts.add(todos[j].text.trim().toLowerCase());
+        todayTexts.add(normalizeTodoText(todos[j].text));
       }
     }
 
@@ -514,7 +527,7 @@
 
     for (var k = 0; k < undoneOlder.length; k++) {
       var todo = undoneOlder[k];
-      var norm = todo.text.trim().toLowerCase();
+      var norm = normalizeTodoText(todo.text);
       if (todayTexts.has(norm)) continue;
       var newTodo = {
         id: generateId(),
@@ -527,6 +540,7 @@
         // Preserve deadline from original
         deadline: todo.deadline || null,
         hasDeadline: todo.hasDeadline || false,
+        taskType: 'todo',
         pinned: false,
         highlighted: false
       };
@@ -562,6 +576,7 @@
     statsMonth: new Date().getMonth(),
     statsYear: new Date().getFullYear(),
     modalDate: null,
+    deadlinePicker: null,
     historyMode: 'collapse', // 'collapse' or 'expand'
     historyEditMode: false,
     historyExpanded: {} // track which date cards are expanded
@@ -1044,15 +1059,19 @@
     }).join('').replace(/<div class="history-card expanded" data-date=""><\/div>/g, '');
   }
 
+  var habitReminderShownFor = null;
+
   function showHabitReminder() {
     var today = getToday();
     var lastReminder = localStorage.getItem('todoapp_last_habit_reminder');
-    if (lastReminder === today) return;
+    if (lastReminder === today || habitReminderShownFor === today) return;
     var unchecked = [];
     for (var i = 0; i < state.habits.length; i++) {
       if (!isHabitDoneToday(state.habits[i].id)) unchecked.push(state.habits[i]);
     }
     if (unchecked.length === 0) return;
+    habitReminderShownFor = today;
+    localStorage.setItem('todoapp_last_habit_reminder', today);
     var names = unchecked.map(function(h) { return h.content; }).join('、');
     Toast.show('今日未打卡: ' + names, 4000);
     localStorage.setItem('todoapp_last_habit_reminder', today);
@@ -1278,6 +1297,7 @@
     try {
       await Sync.updateTodo(id, { done: newDone });
       todo.done = newDone;
+      if (newDone) await deleteFutureCarryCopies(todo);
       renderCurrentView();
       if (state.modalDate) renderModalList();
       saveLocalCache();
@@ -1368,8 +1388,21 @@
     }
   }
 
-  // Show native date picker for deadline
-  function handleDeadlineClick(id) {
+  async function deleteFutureCarryCopies(doneTodo) {
+    var copiesToDelete = state.allTodos.filter(function(t) {
+      return t.id !== doneTodo.id &&
+        t.carriedFrom &&
+        t.date > doneTodo.date &&
+        isSameCarryChain(t, doneTodo);
+    });
+    for (var i = 0; i < copiesToDelete.length; i++) {
+      try { await Sync.deleteTodo(copiesToDelete[i].id); } catch (e) { /* keep local if server delete fails */ }
+      state.allTodos = state.allTodos.filter(function(t) { return t.id !== copiesToDelete[i].id; });
+    }
+  }
+
+  // Legacy prompt picker kept only as fallback reference; current UI uses the calendar picker below.
+  function handleDeadlineClickLegacy(id) {
     var todo = state.allTodos.find(function(t) { return t.id === id; });
     if (!todo) return;
     // If already has deadline, offer to cancel or change
@@ -1402,6 +1435,138 @@
     } else {
       Toast.show('日期格式错误，请使用 YYYY-MM-DD');
     }
+  }
+
+  function toDateString(dateObj) {
+    return dateObj.getFullYear() + '-' +
+      String(dateObj.getMonth() + 1).padStart(2, '0') + '-' +
+      String(dateObj.getDate()).padStart(2, '0');
+  }
+
+  function ensureDeadlinePicker() {
+    var existing = document.getElementById('deadlinePickerOverlay');
+    if (existing) return existing;
+    var overlay = document.createElement('div');
+    overlay.id = 'deadlinePickerOverlay';
+    overlay.className = 'deadline-picker-overlay hidden';
+    overlay.innerHTML =
+      '<div class="deadline-picker-sheet">' +
+        '<div class="deadline-picker-header">' +
+          '<button class="btn-icon" data-action="deadline-prev" aria-label="上一月">' +
+            '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>' +
+          '</button>' +
+          '<div class="deadline-picker-title" id="deadlinePickerTitle"></div>' +
+          '<button class="btn-icon" data-action="deadline-next" aria-label="下一月">' +
+            '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>' +
+          '</button>' +
+        '</div>' +
+        '<div class="deadline-picker-weekdays"><span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span></div>' +
+        '<div class="deadline-picker-grid" id="deadlinePickerGrid"></div>' +
+        '<div class="deadline-picker-actions">' +
+          '<button class="deadline-picker-btn" data-action="deadline-today">今天</button>' +
+          '<button class="deadline-picker-btn danger" data-action="deadline-clear">取消DDL</button>' +
+          '<button class="deadline-picker-btn" data-action="deadline-close">关闭</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(overlay);
+
+    overlay.addEventListener('click', function(e) {
+      if (e.target === overlay) {
+        closeDeadlinePicker();
+        return;
+      }
+      var action = e.target.closest('[data-action]');
+      if (!action || !state.deadlinePicker) return;
+      var act = action.dataset.action;
+      if (act === 'deadline-prev') {
+        state.deadlinePicker.month--;
+        if (state.deadlinePicker.month < 0) {
+          state.deadlinePicker.month = 11;
+          state.deadlinePicker.year--;
+        }
+        renderDeadlinePicker();
+      } else if (act === 'deadline-next') {
+        state.deadlinePicker.month++;
+        if (state.deadlinePicker.month > 11) {
+          state.deadlinePicker.month = 0;
+          state.deadlinePicker.year++;
+        }
+        renderDeadlinePicker();
+      } else if (act === 'deadline-date') {
+        handleSetDeadline(state.deadlinePicker.todoId, action.dataset.date);
+        closeDeadlinePicker();
+      } else if (act === 'deadline-today') {
+        handleSetDeadline(state.deadlinePicker.todoId, getToday());
+        closeDeadlinePicker();
+      } else if (act === 'deadline-clear') {
+        handleSetDeadline(state.deadlinePicker.todoId, null);
+        closeDeadlinePicker();
+      } else if (act === 'deadline-close') {
+        closeDeadlinePicker();
+      }
+    });
+    return overlay;
+  }
+
+  function renderDeadlinePicker() {
+    var picker = state.deadlinePicker;
+    if (!picker || !picker.todoId) return;
+    var title = document.getElementById('deadlinePickerTitle');
+    var grid = document.getElementById('deadlinePickerGrid');
+    if (!title || !grid) return;
+    title.textContent = picker.year + '年' + (picker.month + 1) + '月';
+
+    var first = new Date(picker.year, picker.month, 1);
+    var startDay = first.getDay();
+    var daysInMonth = new Date(picker.year, picker.month + 1, 0).getDate();
+    var prevDays = new Date(picker.year, picker.month, 0).getDate();
+    var cells = [];
+
+    for (var i = startDay - 1; i >= 0; i--) {
+      var prevDate = new Date(picker.year, picker.month - 1, prevDays - i);
+      cells.push({ date: toDateString(prevDate), day: prevDays - i, other: true });
+    }
+    for (var d = 1; d <= daysInMonth; d++) {
+      cells.push({ date: toDateString(new Date(picker.year, picker.month, d)), day: d, other: false });
+    }
+    while (cells.length % 7 !== 0 || cells.length < 42) {
+      var nextDay = cells.length - startDay - daysInMonth + 1;
+      var nextDate = new Date(picker.year, picker.month + 1, nextDay);
+      cells.push({ date: toDateString(nextDate), day: nextDay, other: true });
+    }
+
+    var today = getToday();
+    var selected = picker.selectedDate;
+    grid.innerHTML = cells.map(function(cell) {
+      var cls = 'deadline-date-btn';
+      if (cell.other) cls += ' other-month';
+      if (cell.date === today) cls += ' today';
+      if (cell.date === selected) cls += ' selected';
+      return '<button class="' + cls + '" data-action="deadline-date" data-date="' + cell.date + '">' + cell.day + '</button>';
+    }).join('');
+  }
+
+  function closeDeadlinePicker() {
+    var overlay = document.getElementById('deadlinePickerOverlay');
+    if (overlay) overlay.classList.add('hidden');
+    if (state.deadlinePicker) state.deadlinePicker.todoId = null;
+  }
+
+  // Later declaration intentionally replaces the legacy prompt-based picker.
+  function handleDeadlineClick(id) {
+    var todo = state.allTodos.find(function(t) { return t.id === id; });
+    if (!todo) return;
+    var baseDate = todo.deadline || getToday();
+    var d = new Date(baseDate + 'T00:00:00');
+    state.deadlinePicker = {
+      todoId: id,
+      year: d.getFullYear(),
+      month: d.getMonth(),
+      selectedDate: todo.deadline || null
+    };
+    var overlay = ensureDeadlinePicker();
+    overlay.classList.remove('hidden');
+    renderDeadlinePicker();
   }
 
   // Increment ongoing task
@@ -1749,17 +1914,7 @@
     try {
       await Sync.updateTodo(id, { done: newDone });
       todo.done = newDone;
-      // If marking as DONE, delete any carry-over copies from later dates
-      if (newDone && todo.carriedFrom) {
-        // Find and delete copies that were carried from this todo's original date
-        var copiesToDelete = state.allTodos.filter(function(t) {
-          return t.carriedFrom === todo.date && t.text.trim().toLowerCase() === todo.text.trim().toLowerCase() && t.id !== todo.id;
-        });
-        for (var i = 0; i < copiesToDelete.length; i++) {
-          try { await Sync.deleteTodo(copiesToDelete[i].id); } catch (e) { /* ignore */ }
-          state.allTodos = state.allTodos.filter(function(t) { return t.id !== copiesToDelete[i].id; });
-        }
-      }
+      if (newDone) await deleteFutureCarryCopies(todo);
       renderCurrentView();
       saveLocalCache();
     } catch (e) {
