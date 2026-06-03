@@ -1063,18 +1063,15 @@
 
   function showHabitReminder() {
     var today = getToday();
-    var lastReminder = localStorage.getItem('todoapp_last_habit_reminder');
-    if (lastReminder === today || habitReminderShownFor === today) return;
+    if (habitReminderShownFor === today) return;
     var unchecked = [];
     for (var i = 0; i < state.habits.length; i++) {
       if (!isHabitDoneToday(state.habits[i].id)) unchecked.push(state.habits[i]);
     }
     if (unchecked.length === 0) return;
     habitReminderShownFor = today;
-    localStorage.setItem('todoapp_last_habit_reminder', today);
     var names = unchecked.map(function(h) { return h.content; }).join('、');
     Toast.show('今日未打卡: ' + names, 4000);
-    localStorage.setItem('todoapp_last_habit_reminder', today);
   }
 
   // -- Modal --
@@ -2219,6 +2216,7 @@
     document.getElementById('authPage').classList.remove('hidden');
     state.allTodos = [];
     localCache = { todos: [], lastActiveDate: '' };
+    habitReminderShownFor = null;
   });
 
   // Auth switch
