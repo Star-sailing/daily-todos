@@ -1,4 +1,4 @@
-(function() {
+﻿(function() {
   'use strict';
 
   /* ==================================================================
@@ -156,6 +156,7 @@
           id: t.id,
           text: t.text,
           done: t.done,
+          status: t.status || (t.done ? 'done' : 'active'),
           date: t.date,
           createdAt: t.created_at,
           carriedFrom: t.carried_from,
@@ -178,6 +179,7 @@
         id: todo.id,
         text: todo.text,
         done: todo.done,
+        status: todo.status || 'active',
         date: todo.date,
         carried_from: todo.carriedFrom || null,
         sort_order: todo.order || 0
@@ -203,6 +205,7 @@
           delete payload.ongoing_count;
           delete payload.last_ongoing_date;
           delete payload.last_ongoing_note;
+          delete payload.status;
           result = await supabase.from('todos').insert(payload);
           if (result.error) throw result.error;
           return todo;
@@ -223,6 +226,7 @@
       var payload = {};
       if (changes.text !== undefined) payload.text = changes.text;
       if (changes.done !== undefined) payload.done = changes.done;
+      if (changes.status !== undefined) payload.status = changes.status;
       if (changes.date !== undefined) payload.date = changes.date;
       if (changes.carriedFrom !== undefined) payload.carried_from = changes.carriedFrom;
       if (changes.order !== undefined) payload.sort_order = changes.order;
@@ -246,6 +250,7 @@
           delete payload.ongoing_count;
           delete payload.last_ongoing_date;
           delete payload.last_ongoing_note;
+          delete payload.status;
           result = await supabase.from('todos').update(payload).eq('id', id);
           if (result.error) throw result.error;
           return;
@@ -273,6 +278,7 @@
           id: t.id,
           text: t.text,
           done: t.done,
+          status: t.status || 'active',
           date: t.date,
           carried_from: t.carriedFrom || null,
           sort_order: t.order || 0
@@ -298,6 +304,7 @@
             delete item.task_type;
             delete item.ongoing_count;
             delete item.last_ongoing_date;
+            delete item.status;
             return item;
           });
           result = await supabase.from('todos').insert(payload);
@@ -474,92 +481,216 @@
     return (text || '').trim().toLowerCase();
   }
 
-  function getCarryRootDate(todo) {
-    return todo.carriedFrom || todo.date;
+  // Resolve a todo's ultimate origin date by following the carriedFrom chain
+  // back to the original row (the one whose carriedFrom is null).
+  function resolveUltimateRoot(todo, todos) {
+    var cur = todo;
+    var visited = {};
+    while (cur.carriedFrom && !visited[cur.id]) {
+      visited[cur.id] = true;
+      var prev = null;
+      for (var i = 0; i < todos.length; i++) {
+        var t = todos[i];
+        if (t.date === cur.carriedFrom && normalizeTodoText(t.text) === normalizeTodoText(cur.text)) {
+          prev = t;
+          break;
+        }
+      }
+      if (!prev) break;
+      cur = prev;
+    }
+    return cur.carriedFrom || cur.date;
   }
 
-  function isSameCarryChain(a, b) {
-    return normalizeTodoText(a.text) === normalizeTodoText(b.text) &&
-      getCarryRootDate(a) === getCarryRootDate(b);
+  // Stable identity of a logical todo: ultimate root date + normalized text.
+  function carryChainKey(todo, todos) {
+    return resolveUltimateRoot(todo, todos) + '::' + normalizeTodoText(todo.text);
+  }
+
+  // Find ALL todos in the same carry chain (original + all copies)
+  function getCarryChainTodos(todo, todos) {
+    var list = todos || state.allTodos;
+    var key = carryChainKey(todo, list);
+    return list.filter(function(t) {
+      return t.taskType === 'todo' && carryChainKey(t, list) === key;
+    });
+  }
+
+  // Mark a todo complete and propagate "done" across its whole carry chain:
+  // past/today copies become done, future-dated copies are removed.
+  async function completeCarryChain(doneTodo) {
+    var today = getToday();
+    var list = state.allTodos;
+    var key = carryChainKey(doneTodo, list);
+    var chain = list.filter(function(t) {
+      return t.taskType === 'todo' && t.id !== doneTodo.id && carryChainKey(t, list) === key;
+    });
+    for (var i = 0; i < chain.length; i++) {
+      var t = chain[i];
+      if (t.date > today) {
+        try { await Sync.deleteTodo(t.id); } catch (e) { /* ignore */ }
+        state.allTodos = state.allTodos.filter(function(x) { return x.id !== t.id; });
+      } else if (!t.done && t.status !== 'expired') {
+        t.done = true;
+        t.status = 'done';
+        try { await Sync.updateTodo(t.id, { done: true, status: 'done' }); } catch (e) { /* ignore */ }
+      }
+    }
+  }
+
+  // Collapse duplicate carry copies and propagate a completed task's "done"
+  // state across its chain. Runs on login / midnight before carry-over.
+  async function consolidateCarryChains(todos) {
+    var groups = {};
+    for (var i = 0; i < todos.length; i++) {
+      var t = todos[i];
+      if (t.taskType === 'ongoing' || t.taskType === 'someday') continue;
+      var key = carryChainKey(t, todos);
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(t);
+    }
+
+    for (var key in groups) {
+      var group = groups[key];
+      if (group.length <= 1) continue;
+
+      var hasDone = false;
+      for (var d = 0; d < group.length; d++) {
+        if (group[d].done || group[d].status === 'expired') { hasDone = true; break; }
+      }
+
+      var today = getToday();
+      if (hasDone) {
+        for (var m = 0; m < group.length; m++) {
+          var gt = group[m];
+          if (gt.done || gt.status === 'expired') continue;
+          if (gt.date > today) {
+            try { await Sync.deleteTodo(gt.id); } catch (e) { /* ignore */ }
+            todos = todos.filter(function(tt) { return tt.id !== gt.id; });
+          } else {
+            gt.done = true;
+            gt.status = 'done';
+            try { await Sync.updateTodo(gt.id, { done: true, status: 'done' }); } catch (e) { /* ignore */ }
+          }
+        }
+      } else {
+        group.sort(function(a, b) {
+          var ra = a.carriedFrom || a.date;
+          var rb = b.carriedFrom || b.date;
+          if (ra !== rb) return ra < rb ? -1 : 1;
+          return a.date < b.date ? -1 : 1;
+        });
+        for (var k = 1; k < group.length; k++) {
+          var dup = group[k];
+          try { await Sync.deleteTodo(dup.id); } catch (e) { /* ignore */ }
+          todos = todos.filter(function(tt) { return tt.id !== dup.id; });
+        }
+      }
+    }
+    return todos;
   }
 
   async function runCarryOver(todos) {
     var today = getToday();
-    if (localCache.lastActiveDate === today) return todos;
 
-    var undoneOlder = [];
+    // Move every undone past todo to today. Idempotent — safe to run repeatedly.
+    var todosToMove = [];
     for (var i = 0; i < todos.length; i++) {
-      // Only carry ORIGINAL todos, exclude ongoing and someday
-      if (todos[i].date < today && !todos[i].done && !todos[i].carriedFrom && todos[i].taskType !== 'ongoing' && todos[i].taskType !== 'someday') {
-        // Check if any carry-over copy of this original was marked done on a later date
-        var origText = normalizeTodoText(todos[i].text);
-        var hasDoneCopy = false;
-        for (var k = 0; k < todos.length; k++) {
-          if (todos[k].done && todos[k].date > todos[i].date &&
-              normalizeTodoText(todos[k].text) === origText &&
-              getCarryRootDate(todos[k]) === todos[i].date) {
-            hasDoneCopy = true; break;
-          }
-        }
-        if (!hasDoneCopy) {
-          undoneOlder.push(todos[i]);
-        }
-      }
+      var t = todos[i];
+      if (t.taskType === 'ongoing' || t.taskType === 'someday') continue;
+      if (t.date >= today) continue;
+      if (t.status === 'done' || t.status === 'expired') continue;
+      todosToMove.push(t);
     }
 
-    if (undoneOlder.length === 0) {
+    if (todosToMove.length === 0) {
       localCache.lastActiveDate = today;
       saveLocalCache();
       return todos;
     }
 
-    // Collect normalized texts already on today to deduplicate
-    var todayTexts = new Set();
+    // Collect texts already on today to deduplicate
+    var todayTexts = {};
     for (var j = 0; j < todos.length; j++) {
-      if (todos[j].date === today) {
-        todayTexts.add(normalizeTodoText(todos[j].text));
+      if (todos[j].date === today && todos[j].taskType !== 'ongoing' && todos[j].taskType !== 'someday') {
+        todayTexts[normalizeTodoText(todos[j].text)] = true;
       }
     }
 
-    var newTodos = [];
     var maxOrder = getMaxOrder(todos, today);
-    var newOrder = maxOrder + 1;
-
-    for (var k = 0; k < undoneOlder.length; k++) {
-      var todo = undoneOlder[k];
+    for (var m = 0; m < todosToMove.length; m++) {
+      var todo = todosToMove[m];
       var norm = normalizeTodoText(todo.text);
-      if (todayTexts.has(norm)) continue;
-      var newTodo = {
-        id: generateId(),
-        text: todo.text,
-        done: false,
-        date: today,
-        createdAt: new Date().toISOString(),
-        carriedFrom: todo.date,
-        order: newOrder++,
-        // Preserve deadline from original
-        deadline: todo.deadline || null,
-        hasDeadline: todo.hasDeadline || false,
-        taskType: 'todo',
-        pinned: false,
-        highlighted: false
-      };
-      newTodos.push(newTodo);
-      todayTexts.add(norm);
-    }
+      if (todayTexts[norm]) continue; // Already on today
 
-    if (newTodos.length > 0) {
-      try {
-        await Sync.batchAdd(newTodos);
-      } catch (e) {
-        console.warn('Carry-over sync failed, using local only', e);
+      var oldDate = todo.date;
+      // MOVE: update the todo's date to today instead of creating a copy
+      todo.date = today;
+      if (!todo.carriedFrom) {
+        todo.carriedFrom = oldDate;
       }
-      todos = todos.concat(newTodos);
+      maxOrder++;
+      todo.order = maxOrder;
+      todayTexts[norm] = true;
+
+      // Sync the move to database
+      try {
+        await Sync.updateTodo(todo.id, {
+          date: today,
+          carriedFrom: todo.carriedFrom,
+          order: todo.order
+        });
+      } catch (e) {
+        console.warn('Carry-over move sync failed for', todo.id, e);
+      }
     }
 
     localCache.lastActiveDate = today;
     saveLocalCache();
     return todos;
+  }
+
+  /* ==================================================================
+     STATUS MIGRATION & DDL EXPIRY CHECK
+     ================================================================== */
+  async function migrateTodosStatus(todos) {
+    var updated = false;
+    for (var i = 0; i < todos.length; i++) {
+      var t = todos[i];
+      if (!t.status) {
+        t.status = t.done ? 'done' : 'active';
+        try {
+          await Sync.updateTodo(t.id, { status: t.status });
+          updated = true;
+        } catch (e) {
+          // PGRST204 or other — status field may not exist yet in DB
+          // Continue with in-memory status anyway
+        }
+      }
+    }
+    return updated;
+  }
+
+  async function checkDeadlineExpiry(todos) {
+    var today = getToday();
+    var expiredTodos = [];
+    for (var i = 0; i < todos.length; i++) {
+      var t = todos[i];
+      if (t.status === 'active' && t.hasDeadline && t.deadline && t.deadline < today) {
+        // Past DDL and still active — mark as expired
+        expiredTodos.push(t);
+        t.status = 'expired';
+        t.done = true;
+        try {
+          await Sync.updateTodo(t.id, { status: 'expired', done: true });
+        } catch (e) { /* non-critical — try again next time */ }
+      }
+    }
+    if (expiredTodos.length > 0) {
+      var names = expiredTodos.map(function(et) { return '「' + et.text + '」'; }).join('、');
+      Toast.show('以下待办已过期，自动标记为「已过期」: ' + names, 5000);
+    }
+    return expiredTodos.length > 0;
   }
 
   /* ==================================================================
@@ -595,7 +726,9 @@
   // -- Today View --
   function renderToday() {
     var today = getToday();
-    var todos = getTodosByDate(today);
+    var todos = getTodosByDate(today).filter(function(t) {
+      return t.status !== 'expired';
+    });
     var listEl = document.getElementById('todayList');
     var emptyEl = document.getElementById('todayEmpty');
 
@@ -711,6 +844,9 @@
     // Set date picker default to today
     document.getElementById('historyDatePicker').value = today;
 
+    // Render the unfinished pool (always, even when no history dates exist)
+    renderBacklog();
+
     // Group past todos by date (exclude ongoing/someday — they have their own views)
     var dateGroups = new Map();
     for (var i = 0; i < state.allTodos.length; i++) {
@@ -778,25 +914,91 @@
         '<div class="history-card-body">' +
           todos.map(function(t) {
             if (isEditing) {
+              var isExpiredE = t.status === 'expired';
+              var ddlInfoE = '';
+              if (t.hasDeadline && t.deadline) {
+                ddlInfoE = ' <span class="todo-badge deadline-countdown" style="font-size:10px;padding:1px 4px;margin-left:4px;cursor:pointer;" data-action="history-deadline" data-id="' + t.id + '" title="点击修改DDL">DDL: ' + formatDateShort(t.deadline) + '</span>';
+              }
+              var expiredTagE = '';
+              if (isExpiredE) {
+                expiredTagE = ' <span class="todo-badge deadline-overdue" style="font-size:10px;padding:1px 4px;margin-left:4px;">已过期</span>';
+              }
               return '<div class="todo-row" data-id="' + t.id + '">' +
                 '<button class="history-toggle-btn" data-action="history-toggle" title="切换完成状态">' +
-                  '<div class="indicator ' + (t.done ? 'done' : 'undone') + '"></div>' +
+                  '<div class="indicator ' + (isExpiredE ? 'expired' : (t.done ? 'done' : 'undone')) + '"></div>' +
                 '</button>' +
-                '<span class="txt' + (t.done ? ' was-done' : '') + '">' + escapeHtml(t.text) + '</span>' +
+                '<span class="txt' + (t.done ? ' was-done' : '') + '">' + escapeHtml(t.text) + ddlInfoE + expiredTagE + '</span>' +
                 '<button class="history-delete-btn" data-action="history-delete" title="删除">' +
                   '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
                 '</button>' +
                 '</div>';
             }
+            var isExpired = t.status === 'expired';
+            var ddlInfo = '';
+            if (t.hasDeadline && t.deadline) {
+              ddlInfo = ' <span class="todo-badge deadline-countdown" style="font-size:10px;padding:1px 4px;margin-left:4px;">DDL: ' + formatDateShort(t.deadline) + '</span>';
+            }
+            var expiredTag = '';
+            if (isExpired) {
+              expiredTag = ' <span class="todo-badge deadline-overdue" style="font-size:10px;padding:1px 4px;margin-left:4px;">已过期</span>';
+            }
             return '<div class="todo-row">' +
-              '<div class="indicator ' + (t.done ? 'done' : 'undone') + '"></div>' +
-              '<span class="txt' + (t.done ? ' was-done' : '') + '">' + escapeHtml(t.text) + '</span>' +
+              '<div class="indicator ' + (isExpired ? 'expired' : (t.done ? 'done' : 'undone')) + '"></div>' +
+              '<span class="txt' + (t.done ? ' was-done' : '') + '">' + escapeHtml(t.text) + ddlInfo + expiredTag + '</span>' +
               '</div>';
           }).join('') +
           // Add-to-date button in edit mode
           (isEditing ? '<div class="history-add-to-date"><button class="btn-small" data-action="add-to-date" data-date="' + date + '">+ 添加到此日期</button></div>' : '') +
           extraItems +
         '</div>' +
+      '</div>';
+    }).join('');
+  }
+
+  // -- Unfinished pool (未办池) --
+  function renderBacklog() {
+    var listEl = document.getElementById('backlogList');
+    var emptyEl = document.getElementById('backlogEmpty');
+    var countEl = document.getElementById('backlogCount');
+    var today = getToday();
+
+    var items = state.allTodos.filter(function(t) {
+      return t.taskType === 'todo' && !t.done && t.status !== 'expired';
+    });
+    items.sort(function(a, b) {
+      var ra = a.carriedFrom || a.date;
+      var rb = b.carriedFrom || b.date;
+      if (ra !== rb) return ra < rb ? -1 : 1;
+      return a.date < b.date ? -1 : 1;
+    });
+
+    if (countEl) countEl.textContent = items.length;
+
+    if (items.length === 0) {
+      listEl.innerHTML = '';
+      emptyEl.classList.remove('hidden');
+      return;
+    }
+    emptyEl.classList.add('hidden');
+
+    listEl.innerHTML = items.map(function(t) {
+      var origin = t.carriedFrom || t.date;
+      var age = daysBetween(origin, today);
+      var ageHtml = '';
+      if (age > 0) {
+        ageHtml = '<span class="backlog-age">从' + formatDateShort(origin) + '开始，已拖' + age + '天</span>';
+      } else if (t.date < today) {
+        ageHtml = '<span class="backlog-age">' + formatDateShort(t.date) + ' 未完成</span>';
+      }
+      return '<div class="backlog-item" data-id="' + t.id + '">' +
+        '<button class="backlog-done-btn" data-action="backlog-done" title="标记完成">' +
+          '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' +
+        '</button>' +
+        '<span class="backlog-text">' + escapeHtml(t.text) + '</span>' +
+        ageHtml +
+        '<button class="backlog-delete-btn" data-action="backlog-delete" title="删除">' +
+          '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+        '</button>' +
       '</div>';
     }).join('');
   }
@@ -1253,6 +1455,7 @@
       id: generateId(),
       text: text,
       done: false,
+      status: 'active',
       date: dateStr,
       createdAt: new Date().toISOString(),
       carriedFrom: null,
@@ -1291,10 +1494,14 @@
     var todo = state.allTodos[idx];
     if (todo.taskType === 'ongoing') return;
     var newDone = !todo.done;
+    var newStatus = newDone ? 'done' : 'active';
     try {
-      await Sync.updateTodo(id, { done: newDone });
+      await Sync.updateTodo(id, { done: newDone, status: newStatus });
       todo.done = newDone;
-      if (newDone) await deleteFutureCarryCopies(todo);
+      todo.status = newStatus;
+      if (newDone) {
+        await completeCarryChain(todo);
+      }
       renderCurrentView();
       if (state.modalDate) renderModalList();
       saveLocalCache();
@@ -1373,28 +1580,43 @@
         todo.deadline = null;
         todo.hasDeadline = false;
       } else {
-        await Sync.updateTodo(id, { deadline: deadlineValue, hasDeadline: true });
+        // Setting/renewing a DDL re-activates the todo if it was expired
+        var needsReactivate = todo.status === 'expired';
+        await Sync.updateTodo(id, { deadline: deadlineValue, hasDeadline: true, status: needsReactivate ? 'active' : undefined, done: needsReactivate ? false : undefined });
         todo.deadline = deadlineValue;
         todo.hasDeadline = true;
+        if (needsReactivate) {
+          todo.status = 'active';
+          todo.done = false;
+        }
+      }
+      // Propagate DDL to all items in the same carry chain
+      var chainTodos = getCarryChainTodos(todo);
+      for (var ci = 0; ci < chainTodos.length; ci++) {
+        var ct = chainTodos[ci];
+        if (ct.id === todo.id) continue;
+        try {
+          if (deadlineValue === null) {
+            await Sync.updateTodo(ct.id, { deadline: null, hasDeadline: false });
+            ct.deadline = null;
+            ct.hasDeadline = false;
+          } else {
+            var ctNeedsReactivate = ct.status === 'expired';
+            await Sync.updateTodo(ct.id, { deadline: deadlineValue, hasDeadline: true, status: ctNeedsReactivate ? 'active' : undefined, done: ctNeedsReactivate ? false : undefined });
+            ct.deadline = deadlineValue;
+            ct.hasDeadline = true;
+            if (ctNeedsReactivate) {
+              ct.status = 'active';
+              ct.done = false;
+            }
+          }
+        } catch (chainErr) { /* non-critical */ }
       }
       renderCurrentView();
       if (state.modalDate) renderModalList();
       saveLocalCache();
     } catch (e) {
       console.warn('Sync setDeadline failed', e);
-    }
-  }
-
-  async function deleteFutureCarryCopies(doneTodo) {
-    var copiesToDelete = state.allTodos.filter(function(t) {
-      return t.id !== doneTodo.id &&
-        t.carriedFrom &&
-        t.date > doneTodo.date &&
-        isSameCarryChain(t, doneTodo);
-    });
-    for (var i = 0; i < copiesToDelete.length; i++) {
-      try { await Sync.deleteTodo(copiesToDelete[i].id); } catch (e) { /* keep local if server delete fails */ }
-      state.allTodos = state.allTodos.filter(function(t) { return t.id !== copiesToDelete[i].id; });
     }
   }
 
@@ -1845,7 +2067,7 @@
     var all = state.allTodos.filter(function(t) { return t.date === dateStr; });
     var maxOrder = all.reduce(function(m, t) { return Math.max(m, t.order); }, -1);
     var todo = {
-      id: generateId(), text: text, done: false, date: dateStr,
+      id: generateId(), text: text, done: false, status: 'active', date: dateStr,
       createdAt: new Date().toISOString(), carriedFrom: null, order: maxOrder + 1,
       pinned: false, highlighted: false, deadline: null, hasDeadline: false,
       taskType: 'someday', ongoingCount: 0, lastOngoingDate: null, lastOngoingNote: ''
@@ -1908,10 +2130,14 @@
     var todo = state.allTodos.find(function(t) { return t.id === id; });
     if (!todo) return;
     var newDone = !todo.done;
+    var newStatus = newDone ? 'done' : 'active';
     try {
-      await Sync.updateTodo(id, { done: newDone });
+      await Sync.updateTodo(id, { done: newDone, status: newStatus });
       todo.done = newDone;
-      if (newDone) await deleteFutureCarryCopies(todo);
+      todo.status = newStatus;
+      if (newDone) {
+        await completeCarryChain(todo);
+      }
       renderCurrentView();
       saveLocalCache();
     } catch (e) {
@@ -1938,6 +2164,14 @@
       if (row) handleHistoryDeleteItem(row.dataset.id);
       return;
     }
+    // History DDL badge click (only in edit mode)
+    var ddlBtn = e.target.closest('[data-action="history-deadline"]');
+    if (ddlBtn) {
+      if (!state.historyEditMode) return;
+      var todoId = ddlBtn.dataset.id;
+      if (todoId) handleDeadlineClick(todoId);
+      return;
+    }
     // Add-to-date button
     var addToDateBtn = e.target.closest('[data-action="add-to-date"]');
     if (addToDateBtn) {
@@ -1962,6 +2196,34 @@
     }
   });
 
+  // Backlog (未办池) actions
+  async function handleBacklogDone(id) {
+    var todo = state.allTodos.find(function(t) { return t.id === id; });
+    if (!todo) return;
+    todo.done = true;
+    todo.status = 'done';
+    try {
+      await Sync.updateTodo(id, { done: true, status: 'done' });
+      await completeCarryChain(todo);
+      renderCurrentView();
+      saveLocalCache();
+    } catch (e) {
+      console.warn('Backlog done failed', e);
+      if (isAuthError(e)) return;
+      Toast.show('操作失败');
+    }
+  }
+
+  document.getElementById('backlogList').addEventListener('click', function(e) {
+    var item = e.target.closest('.backlog-item');
+    if (!item) return;
+    var id = item.dataset.id;
+    var action = e.target.closest('[data-action]');
+    if (!action) return;
+    if (action.dataset.action === 'backlog-done') handleBacklogDone(id);
+    else if (action.dataset.action === 'backlog-delete') handleDelete(id);
+  });
+
   // History edit toggle
   document.getElementById('historyEditBtn').addEventListener('click', function() {
     state.historyEditMode = !state.historyEditMode;
@@ -1981,7 +2243,7 @@
     var all = state.allTodos.filter(function(t) { return t.date === targetDate; });
     var maxOrder = all.reduce(function(m, t) { return Math.max(m, t.order); }, -1);
     var todo = {
-      id: generateId(), text: text, done: false, date: targetDate,
+      id: generateId(), text: text, done: false, status: 'active', date: targetDate,
       createdAt: new Date().toISOString(), carriedFrom: null, order: maxOrder + 1,
       pinned: false, highlighted: false, deadline: null, hasDeadline: false,
       taskType: 'todo', ongoingCount: 0, lastOngoingDate: null, lastOngoingNote: ''
@@ -2128,7 +2390,7 @@
       var all = state.allTodos.filter(function(t) { return t.date === dateStr && t.taskType !== 'ongoing' && t.taskType !== 'someday'; });
       var maxOrder = all.reduce(function(m, t) { return Math.max(m, t.order); }, -1);
       var todo = {
-        id: generateId(), text: text, done: false, date: dateStr,
+        id: generateId(), text: text, done: false, status: 'active', date: dateStr,
         createdAt: new Date().toISOString(), carriedFrom: null, order: maxOrder + 1,
         pinned: false, highlighted: false, deadline: null, hasDeadline: false,
         taskType: 'ongoing', ongoingCount: 0, lastOngoingDate: null, lastOngoingNote: ''
@@ -2296,65 +2558,86 @@
   /* ==================================================================
      APP ENTRY
      ================================================================== */
+  var enterAppRunning = false;
   async function enterApp() {
-    // Try to refresh the session token first — MUST succeed
-    var session = await Auth.refreshSession();
-    if (!session) {
-      // Try to get current session as fallback
-      session = await Auth.getSession();
-    }
-    if (!session) {
-      // No valid session at all — must re-login
-      Toast.show('会话已过期，请重新登录');
-      document.getElementById('appPage').classList.add('hidden');
-      document.getElementById('authPage').classList.remove('hidden');
-      return;
-    }
-
-    // Fetch todos from Supabase
-    var todos = [];
+    if (enterAppRunning) return;
+    enterAppRunning = true;
     try {
-      todos = await Sync.fetchTodos();
-    } catch (e) {
-      console.warn('Fetch failed, falling back to cache', e);
+      // Try to refresh the session token first — MUST succeed
+      var session = await Auth.refreshSession();
+      if (!session) {
+        // Try to get current session as fallback
+        session = await Auth.getSession();
+      }
+      if (!session) {
+        // No valid session at all — must re-login
+        Toast.show('会话已过期，请重新登录');
+        document.getElementById('appPage').classList.add('hidden');
+        document.getElementById('authPage').classList.remove('hidden');
+        return;
+      }
+
+      // Fetch todos from Supabase
+      var todos = [];
+      try {
+        todos = await Sync.fetchTodos();
+      } catch (e) {
+        console.warn('Fetch failed, falling back to cache', e);
+        loadLocalCache();
+        todos = localCache.todos;
+        Toast.show('网络连接失败，使用本地缓存');
+      }
+
+      // Fetch habits
+      try {
+        state.habits = await HabitSync.fetchHabits();
+        state.habitLogs = await HabitSync.fetchHabitLogs();
+      } catch (e) {
+        console.warn('Fetch habits failed', e);
+        state.habits = [];
+        state.habitLogs = [];
+      }
+
+      // Load lastActiveDate from localStorage (persisted across sessions)
       loadLocalCache();
-      todos = localCache.todos;
-      Toast.show('网络连接失败，使用本地缓存');
+
+      // Migrate existing todos that lack a status field
+      await migrateTodosStatus(todos);
+
+      // Collapse duplicate carry copies + propagate done status
+      todos = await consolidateCarryChains(todos);
+
+      state.allTodos = todos;
+      todos = await runCarryOver(todos);
+      state.allTodos = todos;
+
+      // Check for expired DDLs and mark them
+      var hadExpiry = await checkDeadlineExpiry(todos);
+      if (hadExpiry) {
+        // Re-run carry-over since expired todos may change carry decisions
+        todos = await runCarryOver(todos);
+        state.allTodos = todos;
+      }
+
+      // Update local cache
+      localCache.todos = todos;
+      saveLocalCache();
+
+      // Show app, hide auth
+      document.getElementById('authPage').classList.add('hidden');
+      document.getElementById('appPage').classList.remove('hidden');
+
+      updateHeaderDate();
+      switchTab('tabToday');
+
+      // Start midnight checker
+      startMidnightChecker();
+
+      // Remind about unchecked habits
+      showHabitReminder();
+    } finally {
+      enterAppRunning = false;
     }
-
-    // Fetch habits
-    try {
-      state.habits = await HabitSync.fetchHabits();
-      state.habitLogs = await HabitSync.fetchHabitLogs();
-    } catch (e) {
-      console.warn('Fetch habits failed', e);
-      state.habits = [];
-      state.habitLogs = [];
-    }
-
-    // Load lastActiveDate from localStorage (persisted across sessions)
-    loadLocalCache();
-
-    state.allTodos = todos;
-    todos = await runCarryOver(todos);
-    state.allTodos = todos;
-
-    // Update local cache
-    localCache.todos = todos;
-    saveLocalCache();
-
-    // Show app, hide auth
-    document.getElementById('authPage').classList.add('hidden');
-    document.getElementById('appPage').classList.remove('hidden');
-
-    updateHeaderDate();
-    switchTab('tabToday');
-
-    // Start midnight checker
-    startMidnightChecker();
-
-    // Remind about unchecked habits
-    showHabitReminder();
   }
 
   /* ==================================================================
@@ -2373,8 +2656,14 @@
         // Fetch fresh data and run carry-over
         try {
           state.allTodos = await Sync.fetchTodos();
+          await migrateTodosStatus(state.allTodos);
+          state.allTodos = await consolidateCarryChains(state.allTodos);
         } catch (e) { /* offline */ }
         state.allTodos = await runCarryOver(state.allTodos);
+        var hadExpiry = await checkDeadlineExpiry(state.allTodos);
+        if (hadExpiry) {
+          state.allTodos = await runCarryOver(state.allTodos);
+        }
         localCache.todos = state.allTodos;
         saveLocalCache();
         renderCurrentView();
