@@ -1,4 +1,4 @@
-﻿(function() {
+(function() {
   'use strict';
 
   /* ==================================================================
@@ -481,9 +481,11 @@
     return (text || '').trim().toLowerCase();
   }
 
-  // Resolve a todo's ultimate origin date by following the carriedFrom chain
-  // back to the original row (the one whose carriedFrom is null).
-  function resolveUltimateRoot(todo, todos) {
+  // Follow the carriedFrom chain back to the ultimate original row
+  // (the one whose carriedFrom is null). When several rows match a date+text
+  // lookup, the true original (carriedFrom === null) wins. Returns the
+  // farthest reachable row.
+  function resolveUltimateRootTodo(todo, todos) {
     var cur = todo;
     var visited = {};
     while (cur.carriedFrom && !visited[cur.id]) {
@@ -492,19 +494,24 @@
       for (var i = 0; i < todos.length; i++) {
         var t = todos[i];
         if (t.date === cur.carriedFrom && normalizeTodoText(t.text) === normalizeTodoText(cur.text)) {
-          prev = t;
-          break;
+          if (t.carriedFrom === null) { prev = t; break; }
+          if (!prev) prev = t;
         }
       }
       if (!prev) break;
       cur = prev;
     }
-    return cur.carriedFrom || cur.date;
+    return cur;
   }
 
-  // Stable identity of a logical todo: ultimate root date + normalized text.
+  // Stable identity of a logical carry chain. Anchored on the original row's
+  // id whenever that row still exists, so two independently created tasks with
+  // the same text are NEVER merged. A chain whose original was deleted/moved
+  // (MOVE-based carry) is treated as its own single-row chain.
   function carryChainKey(todo, todos) {
-    return resolveUltimateRoot(todo, todos) + '::' + normalizeTodoText(todo.text);
+    var root = resolveUltimateRootTodo(todo, todos);
+    if (root.carriedFrom === null) return 'root:' + root.id;
+    return 'lone:' + todo.id;
   }
 
   // Find ALL todos in the same carry chain (original + all copies)
@@ -530,7 +537,7 @@
       if (t.date > today) {
         try { await Sync.deleteTodo(t.id); } catch (e) { /* ignore */ }
         state.allTodos = state.allTodos.filter(function(x) { return x.id !== t.id; });
-      } else if (!t.done && t.status !== 'expired') {
+      } else if (!t.done) {
         t.done = true;
         t.status = 'done';
         try { await Sync.updateTodo(t.id, { done: true, status: 'done' }); } catch (e) { /* ignore */ }
@@ -554,37 +561,26 @@
       var group = groups[key];
       if (group.length <= 1) continue;
 
+      // A chain that contains any completed row is finished history: keep every
+      // row untouched. Never auto-propagate "done" to the other copies — that
+      // logic corrupted historical records when it ran on login.
       var hasDone = false;
       for (var d = 0; d < group.length; d++) {
-        if (group[d].done || group[d].status === 'expired') { hasDone = true; break; }
+        if (group[d].done) { hasDone = true; break; }
       }
+      if (hasDone) continue;
 
-      var today = getToday();
-      if (hasDone) {
-        for (var m = 0; m < group.length; m++) {
-          var gt = group[m];
-          if (gt.done || gt.status === 'expired') continue;
-          if (gt.date > today) {
-            try { await Sync.deleteTodo(gt.id); } catch (e) { /* ignore */ }
-            todos = todos.filter(function(tt) { return tt.id !== gt.id; });
-          } else {
-            gt.done = true;
-            gt.status = 'done';
-            try { await Sync.updateTodo(gt.id, { done: true, status: 'done' }); } catch (e) { /* ignore */ }
-          }
-        }
-      } else {
-        group.sort(function(a, b) {
-          var ra = a.carriedFrom || a.date;
-          var rb = b.carriedFrom || b.date;
-          if (ra !== rb) return ra < rb ? -1 : 1;
-          return a.date < b.date ? -1 : 1;
-        });
-        for (var k = 1; k < group.length; k++) {
-          var dup = group[k];
-          try { await Sync.deleteTodo(dup.id); } catch (e) { /* ignore */ }
-          todos = todos.filter(function(tt) { return tt.id !== dup.id; });
-        }
+      // All-undone duplicate copies: keep the earliest (the original), delete the rest.
+      group.sort(function(a, b) {
+        var ra = a.carriedFrom || a.date;
+        var rb = b.carriedFrom || b.date;
+        if (ra !== rb) return ra < rb ? -1 : 1;
+        return a.date < b.date ? -1 : 1;
+      });
+      for (var k = 1; k < group.length; k++) {
+        var dup = group[k];
+        try { await Sync.deleteTodo(dup.id); } catch (e) { /* ignore */ }
+        todos = todos.filter(function(tt) { return tt.id !== dup.id; });
       }
     }
     return todos;
@@ -599,7 +595,7 @@
       var t = todos[i];
       if (t.taskType === 'ongoing' || t.taskType === 'someday') continue;
       if (t.date >= today) continue;
-      if (t.status === 'done' || t.status === 'expired') continue;
+      if (t.done || t.status === 'done') continue;
       todosToMove.push(t);
     }
 
@@ -609,19 +605,22 @@
       return todos;
     }
 
-    // Collect texts already on today to deduplicate
-    var todayTexts = {};
+    // Collect carry-chain keys already on today to deduplicate. Dedup is per
+    // chain, not per text: two same-text tasks in different chains (e.g. a
+    // "健身" started on 8.10 and another on 8.15) are independent and both
+    // must carry over.
+    var todayChainKeys = {};
     for (var j = 0; j < todos.length; j++) {
       if (todos[j].date === today && todos[j].taskType !== 'ongoing' && todos[j].taskType !== 'someday') {
-        todayTexts[normalizeTodoText(todos[j].text)] = true;
+        todayChainKeys[carryChainKey(todos[j], todos)] = true;
       }
     }
 
     var maxOrder = getMaxOrder(todos, today);
     for (var m = 0; m < todosToMove.length; m++) {
       var todo = todosToMove[m];
-      var norm = normalizeTodoText(todo.text);
-      if (todayTexts[norm]) continue; // Already on today
+      var chainKey = carryChainKey(todo, todos);
+      if (todayChainKeys[chainKey]) continue; // Same chain already on today
 
       var oldDate = todo.date;
       // MOVE: update the todo's date to today instead of creating a copy
@@ -631,7 +630,7 @@
       }
       maxOrder++;
       todo.order = maxOrder;
-      todayTexts[norm] = true;
+      todayChainKeys[chainKey] = true;
 
       // Sync the move to database
       try {
@@ -677,18 +676,18 @@
     for (var i = 0; i < todos.length; i++) {
       var t = todos[i];
       if (t.status === 'active' && t.hasDeadline && t.deadline && t.deadline < today) {
-        // Past DDL and still active — mark as expired
+        // Past DDL and still active — mark as expired for display only.
+        // Never auto-complete: expiry is a reminder, only a real check counts.
         expiredTodos.push(t);
         t.status = 'expired';
-        t.done = true;
         try {
-          await Sync.updateTodo(t.id, { status: 'expired', done: true });
+          await Sync.updateTodo(t.id, { status: 'expired' });
         } catch (e) { /* non-critical — try again next time */ }
       }
     }
     if (expiredTodos.length > 0) {
       var names = expiredTodos.map(function(et) { return '「' + et.text + '」'; }).join('、');
-      Toast.show('以下待办已过期，自动标记为「已过期」: ' + names, 5000);
+      Toast.show('以下待办已过截止日期，记得完成: ' + names, 5000);
     }
     return expiredTodos.length > 0;
   }
@@ -710,7 +709,8 @@
     deadlinePicker: null,
     historyMode: 'collapse', // 'collapse' or 'expand'
     historyEditMode: false,
-    historyExpanded: {} // track which date cards are expanded
+    historyExpanded: {}, // track which date cards are expanded
+    historyPickedDate: null // date chosen via the history date picker
   };
 
   /* ==================================================================
@@ -726,15 +726,14 @@
   // -- Today View --
   function renderToday() {
     var today = getToday();
-    var todos = getTodosByDate(today).filter(function(t) {
-      return t.status !== 'expired';
-    });
+    var todos = getTodosByDate(today);
     var listEl = document.getElementById('todayList');
     var emptyEl = document.getElementById('todayEmpty');
 
     if (todos.length === 0) {
       listEl.innerHTML = '';
       emptyEl.classList.remove('hidden');
+      renderSomeday();
       return;
     }
     emptyEl.classList.add('hidden');
@@ -841,8 +840,10 @@
       historyAddBar.classList.toggle('hidden', !isEditing);
     }
 
-    // Set date picker default to today
-    document.getElementById('historyDatePicker').value = today;
+    // Set date picker default to today (keep the user's chosen date across re-renders)
+    if (!state.historyPickedDate) {
+      document.getElementById('historyDatePicker').value = today;
+    }
 
     // Render the unfinished pool (always, even when no history dates exist)
     renderBacklog();
@@ -963,7 +964,7 @@
     var today = getToday();
 
     var items = state.allTodos.filter(function(t) {
-      return t.taskType === 'todo' && !t.done && t.status !== 'expired';
+      return t.taskType === 'todo' && !t.done && t.date <= today;
     });
     items.sort(function(a, b) {
       var ra = a.carriedFrom || a.date;
@@ -1080,9 +1081,11 @@
     var monthStr = state.statsYear + '-' + String(state.statsMonth + 1).padStart(2, '0');
     var totalInMonth = 0, doneInMonth = 0;
     for (var i = 0; i < state.allTodos.length; i++) {
-      if (state.allTodos[i].date.substring(0, 7) === monthStr) {
+      var t = state.allTodos[i];
+      if (t.taskType === 'ongoing' || t.taskType === 'someday') continue;
+      if (t.date.substring(0, 7) === monthStr) {
         totalInMonth++;
-        if (state.allTodos[i].done) doneInMonth++;
+        if (t.done) doneInMonth++;
       }
     }
 
@@ -1209,11 +1212,11 @@
     // Collect all dates that have habit logs or ongoing activity
     var allDates = new Set();
     for (var i = 0; i < state.habitLogs.length; i++) {
-      if (state.habitLogs[i].date < today) allDates.add(state.habitLogs[i].date);
+      if (state.habitLogs[i].date <= today) allDates.add(state.habitLogs[i].date);
     }
     for (var j = 0; j < state.allTodos.length; j++) {
       var t = state.allTodos[j];
-      if (t.taskType === 'ongoing' && t.lastOngoingDate && t.lastOngoingDate < today) {
+      if (t.taskType === 'ongoing' && t.lastOngoingDate && t.lastOngoingDate <= today) {
         allDates.add(t.lastOngoingDate);
       }
     }
@@ -1422,6 +1425,7 @@
     var map = new Map();
     for (var i = 0; i < state.allTodos.length; i++) {
       var t = state.allTodos[i];
+      if (t.taskType === 'ongoing' || t.taskType === 'someday') continue;
       if (!map.has(t.date)) map.set(t.date, { total: 0, done: 0 });
       var entry = map.get(t.date);
       entry.total++;
@@ -1549,6 +1553,7 @@
       saveLocalCache();
     } catch (e) {
       console.warn('Sync pin failed', e);
+      Toast.show('同步失败，请检查网络');
       // Don't update local state — if sync fails, keep original
     }
   }
@@ -1566,6 +1571,7 @@
       saveLocalCache();
     } catch (e) {
       console.warn('Sync highlight failed', e);
+      Toast.show('同步失败，请检查网络');
       // Don't update local state — if sync fails, keep original
     }
   }
@@ -1996,6 +2002,7 @@
     document.getElementById('tabHabits').classList.toggle('hidden', tabName !== 'tabHabits');
 
     renderCurrentView();
+    if (loadedOnce) refreshData();
   }
 
   /* ==================================================================
@@ -2286,11 +2293,15 @@
   document.getElementById('historyDatePicker').addEventListener('change', function() {
     var targetDate = this.value;
     if (!targetDate) return;
-    // If in collapse mode, temporarily expand just that card
+    state.historyPickedDate = targetDate;
     var card = document.querySelector('.history-card[data-date="' + targetDate + '"]');
     if (card) {
       card.classList.add('expanded');
+      // Track the expansion so it survives re-renders
+      state.historyExpanded[targetDate] = true;
       card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else {
+      Toast.show('该日期没有记录');
     }
   });
 
@@ -2321,7 +2332,7 @@
   });
 
   // Habits list clicks
-  document.getElementById('habitsList').addEventListener('click', function(e) {
+  document.getElementById('habitsList').addEventListener('click', async function(e) {
     var card = e.target.closest('.habit-card');
     if (!card) return;
     var id = card.dataset.id;
@@ -2342,11 +2353,11 @@
       }
       if (idx === -1) return;
       try {
-        Sync.deleteTodo(id);
+        await Sync.deleteTodo(id);
         state.allTodos.splice(idx, 1);
         renderHabits();
         Toast.show('已删除');
-      } catch (ex) { console.warn('Delete ongoing failed', ex); }
+      } catch (ex) { console.warn('Delete ongoing failed', ex); Toast.show('删除失败'); }
     }
   });
 
@@ -2472,13 +2483,37 @@
   });
 
   // Logout
+  var manualLogout = false;
+  function resetAppState() {
+    state.allTodos = [];
+    state.habits = [];
+    state.habitLogs = [];
+    state.historyExpanded = {};
+    state.historyPickedDate = null;
+    state.historyEditMode = false;
+    state.historyMode = 'collapse';
+    state.habitViewMode = 'active';
+    state.currentTab = 'tabToday';
+    state.calendarMonth = new Date().getMonth();
+    state.calendarYear = new Date().getFullYear();
+    state.statsMonth = new Date().getMonth();
+    state.statsYear = new Date().getFullYear();
+    state.modalDate = null;
+    state.deadlinePicker = null;
+    habitReminderShownFor = null;
+    loadedOnce = false;
+    closeModal();
+    closeDeadlinePicker();
+  }
+
   document.getElementById('logoutBtn').addEventListener('click', async function() {
-    await Auth.logout();
+    manualLogout = true;
+    try {
+      await Auth.logout();
+    } catch (e) { /* offline — still leave the app */ }
     document.getElementById('appPage').classList.add('hidden');
     document.getElementById('authPage').classList.remove('hidden');
-    state.allTodos = [];
-    localCache = { todos: [], lastActiveDate: '' };
-    habitReminderShownFor = null;
+    resetAppState();
   });
 
   // Auth switch
@@ -2559,6 +2594,7 @@
      APP ENTRY
      ================================================================== */
   var enterAppRunning = false;
+  var loadedOnce = false; // set after the first successful enterApp
   async function enterApp() {
     if (enterAppRunning) return;
     enterAppRunning = true;
@@ -2635,16 +2671,49 @@
 
       // Remind about unchecked habits
       showHabitReminder();
+      loadedOnce = true;
     } finally {
       enterAppRunning = false;
     }
   }
 
   /* ==================================================================
-     MIDNIGHT CHECKER
+     SILENT DATA REFRESH (tab switch / window focus / midnight)
      ================================================================== */
+  var refreshRunning = false;
   var midnightTimer = null;
   var lastKnownDate = getToday();
+
+  // Silently pull the latest data from Supabase and re-run the daily
+  // maintenance pipeline (consolidate → carry-over → DDL check).
+  async function refreshData() {
+    if (refreshRunning || !supabase) return;
+    refreshRunning = true;
+    try {
+      var todos = await Sync.fetchTodos();
+      todos = await consolidateCarryChains(todos);
+      state.allTodos = todos;
+      todos = await runCarryOver(todos);
+      state.allTodos = todos;
+      var hadExpiry = await checkDeadlineExpiry(todos);
+      if (hadExpiry) {
+        todos = await runCarryOver(todos);
+        state.allTodos = todos;
+      }
+      try {
+        state.habits = await HabitSync.fetchHabits();
+        state.habitLogs = await HabitSync.fetchHabitLogs();
+      } catch (e) { /* keep the previous habit data */ }
+      localCache.todos = state.allTodos;
+      saveLocalCache();
+      renderCurrentView();
+      if (state.modalDate) renderModalList();
+    } catch (e) {
+      // Offline or auth issue — keep the current state, try again later
+    } finally {
+      refreshRunning = false;
+    }
+  }
 
   function startMidnightChecker() {
     if (midnightTimer) clearInterval(midnightTimer);
@@ -2653,23 +2722,18 @@
       if (today !== lastKnownDate) {
         lastKnownDate = today;
         updateHeaderDate();
-        // Fetch fresh data and run carry-over
-        try {
-          state.allTodos = await Sync.fetchTodos();
-          await migrateTodosStatus(state.allTodos);
-          state.allTodos = await consolidateCarryChains(state.allTodos);
-        } catch (e) { /* offline */ }
-        state.allTodos = await runCarryOver(state.allTodos);
-        var hadExpiry = await checkDeadlineExpiry(state.allTodos);
-        if (hadExpiry) {
-          state.allTodos = await runCarryOver(state.allTodos);
-        }
-        localCache.todos = state.allTodos;
-        saveLocalCache();
-        renderCurrentView();
+        await refreshData();
       }
     }, 60000);
   }
+
+  // Refresh when the tab regains focus (cheap cross-device sync)
+  window.addEventListener('focus', function() {
+    if (loadedOnce) refreshData();
+  });
+  document.addEventListener('visibilitychange', function() {
+    if (!document.hidden && loadedOnce) refreshData();
+  });
 
   /* ==================================================================
      PWA / SERVICE WORKER
@@ -2755,11 +2819,17 @@
         await enterApp();
       }
       if (event === 'SIGNED_OUT') {
-        // Token expired or user signed out — force back to login
+        // Manual logout is handled by the logout button; only force back to
+        // the login page (without clearing the local cache) when the session
+        // actually expired.
+        if (manualLogout) {
+          manualLogout = false;
+          return;
+        }
         console.warn('Auth state: SIGNED_OUT — returning to login');
         document.getElementById('appPage').classList.add('hidden');
         document.getElementById('authPage').classList.remove('hidden');
-        localStorage.removeItem('todoapp_cache'); // clear stale cache
+        resetAppState();
         Toast.show('登录已过期，请重新登录');
       }
       if (event === 'TOKEN_REFRESHED' && session) {
