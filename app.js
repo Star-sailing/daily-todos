@@ -365,7 +365,8 @@
           id: l.id,
           habitId: l.habit_id,
           date: l.date,
-          done: l.done
+          done: l.done,
+          note: l.note || ''
         };
       });
     },
@@ -405,12 +406,66 @@
         date: log.date,
         done: log.done
       };
+      if (log.note !== undefined) payload.note = log.note;
       var result = await supabase.from('habit_logs').insert(payload);
       if (result.error) {
-        if (result.error.code === '23505') return log;
+        if (result.error.code === '23505') return null; // already checked in that day
+        if (result.error.code === 'PGRST204') {
+          // note column not migrated yet — retry without it
+          delete payload.note;
+          result = await supabase.from('habit_logs').insert(payload);
+          if (result.error) throw result.error;
+          return log;
+        }
         throw result.error;
       }
       return log;
+    }
+  };
+
+  /* ==================================================================
+     ONGOING LOG SYNC MODULE (per-day check-in details for ongoing tasks)
+     ================================================================== */
+  var OngoingLogSync = {
+    async fetchLogs() {
+      if (!supabase) return [];
+      var result = await supabase.from('ongoing_logs').select('*').order('date', { ascending: false });
+      if (result.error) throw result.error;
+      return (result.data || []).map(function(l) {
+        return {
+          id: l.id,
+          todoId: l.todo_id,
+          date: l.date,
+          note: l.note || ''
+        };
+      });
+    },
+
+    async addLog(log) {
+      if (!supabase) return null;
+      var payload = {
+        id: log.id,
+        todo_id: log.todoId,
+        date: log.date,
+        note: log.note || ''
+      };
+      var result = await supabase.from('ongoing_logs').insert(payload);
+      if (result.error) {
+        if (result.error.code === '23505') return null; // already logged that day
+        // Table not migrated yet — callers degrade gracefully
+        if (result.error.code === 'PGRST204' || result.error.code === 'PGRST205' || result.error.code === '42P01') {
+          console.warn('ongoing_logs not available yet', result.error.message);
+          throw result.error;
+        }
+        throw result.error;
+      }
+      return log;
+    },
+
+    async deleteLog(id) {
+      if (!supabase) return;
+      var result = await supabase.from('ongoing_logs').delete().eq('id', id);
+      if (result.error) throw result.error;
     }
   };
 
@@ -699,6 +754,7 @@
     allTodos: [],
     habits: [],
     habitLogs: [],
+    ongoingLogs: [], // per-day check-in details for ongoing tasks
     habitViewMode: 'active', // 'active' or 'history'
     currentTab: 'tabToday',
     calendarMonth: new Date().getMonth(),
@@ -873,28 +929,41 @@
       var total = todos.length;
       var pct = Math.round((doneCount / total) * 100);
 
-      // Ongoing tasks active on this date
-      var ongoingOnDate = state.allTodos.filter(function(t) {
-        return t.taskType === 'ongoing' && t.lastOngoingDate === date;
-      });
+      // Ongoing tasks active on this date (prefer per-day detail logs, fall
+      // back to lastOngoingDate for legacy rows that predate the logs table)
+      var ongoingOnDate = [];
+      for (var oi = 0; oi < state.ongoingLogs.length; oi++) {
+        var ol = state.ongoingLogs[oi];
+        if (ol.date !== date) continue;
+        var ot0 = state.allTodos.find(function(t) { return t.id === ol.todoId; });
+        if (ot0) ongoingOnDate.push({ text: ot0.text, note: ol.note || '' });
+      }
+      for (var oi2 = 0; oi2 < state.allTodos.length; oi2++) {
+        var ot2 = state.allTodos[oi2];
+        if (ot2.taskType === 'ongoing' && ot2.lastOngoingDate === date &&
+            !state.ongoingLogs.some(function(l) { return l.todoId === ot2.id && l.date === date; })) {
+          ongoingOnDate.push({ text: ot2.text, note: ot2.lastOngoingNote || '' });
+        }
+      }
 
       // Habit check-ins on this date
       var habitsOnDate = state.habitLogs.filter(function(l) {
         return l.date === date && l.done;
       }).map(function(l) {
         var h = state.habits.find(function(hb) { return hb.id === l.habitId; });
-        return h ? h.content : null;
+        return h ? { name: h.content, note: l.note || '' } : null;
       }).filter(Boolean);
 
       var extraItems = '';
       if (ongoingOnDate.length > 0 || habitsOnDate.length > 0) {
         extraItems = '<div class="history-extra">';
-        for (var oi = 0; oi < ongoingOnDate.length; oi++) {
-          var ot = ongoingOnDate[oi];
-          extraItems += '<div class="todo-row ongoing-row"><div class="indicator ongoing"></div><span class="txt">' + escapeHtml(ot.text) + (ot.lastOngoingNote ? ' — ' + escapeHtml(ot.lastOngoingNote) : '') + '</span></div>';
+        for (var oi3 = 0; oi3 < ongoingOnDate.length; oi3++) {
+          var od = ongoingOnDate[oi3];
+          extraItems += '<div class="todo-row ongoing-row"><div class="indicator ongoing"></div><span class="txt">' + escapeHtml(od.text) + (od.note ? ' — ' + escapeHtml(od.note) : '') + '</span></div>';
         }
         for (var hi = 0; hi < habitsOnDate.length; hi++) {
-          extraItems += '<div class="todo-row habit-row"><div class="indicator habit"></div><span class="txt">打卡: ' + escapeHtml(habitsOnDate[hi]) + '</span></div>';
+          var hd = habitsOnDate[hi];
+          extraItems += '<div class="todo-row habit-row"><div class="indicator habit"></div><span class="txt">打卡: ' + escapeHtml(hd.name) + (hd.note ? ' — ' + escapeHtml(hd.note) : '') + '</span></div>';
         }
         extraItems += '</div>';
       }
@@ -1149,6 +1218,9 @@
         '<div class="habit-header">' +
           '<span class="habit-content" data-action="edit-habit-name" title="点击编辑名称">' + escapeHtml(h.content) + '</span>' +
           '<div class="habit-header-actions">' +
+            '<button class="habit-edit" data-action="view-habit-history" title="历史回放">' +
+              '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>' +
+            '</button>' +
             '<button class="habit-edit" data-action="edit-habit-params" title="编辑参数">' +
               '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>' +
             '</button>' +
@@ -1178,6 +1250,9 @@
         '<div class="habit-header">' +
           '<span class="habit-content ongoing-name" data-action="edit-ongoing-name" title="点击编辑名称">' + escapeHtml(ot.text) + '</span>' +
           '<div class="habit-header-actions">' +
+            '<button class="habit-edit" data-action="view-ongoing-history" title="历史回放">' +
+              '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>' +
+            '</button>' +
             '<button class="habit-edit" data-action="edit-ongoing-params" title="编辑">' +
               '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>' +
             '</button>' +
@@ -1220,6 +1295,9 @@
         allDates.add(t.lastOngoingDate);
       }
     }
+    for (var k = 0; k < state.ongoingLogs.length; k++) {
+      if (state.ongoingLogs[k].date <= today) allDates.add(state.ongoingLogs[k].date);
+    }
 
     var dates = Array.from(allDates).sort().reverse();
     if (dates.length === 0) {
@@ -1237,15 +1315,22 @@
         var l = state.habitLogs[hi];
         if (l.date === date && l.done) {
           var h = state.habits.find(function(hb) { return hb.id === l.habitId; });
-          if (h) items.push('<div class="todo-row habit-row"><div class="indicator habit"></div><span class="txt">打卡: ' + escapeHtml(h.content) + '</span></div>');
+          if (h) items.push('<div class="todo-row habit-row"><div class="indicator habit"></div><span class="txt">打卡: ' + escapeHtml(h.content) + (l.note ? ' — ' + escapeHtml(l.note) : '') + '</span></div>');
         }
       }
 
-      // Ongoing task activity for this date
-      for (var oi = 0; oi < state.allTodos.length; oi++) {
-        var ot = state.allTodos[oi];
-        if (ot.taskType === 'ongoing' && ot.lastOngoingDate === date) {
-          items.push('<div class="todo-row ongoing-row"><div class="indicator ongoing"></div><span class="txt">' + escapeHtml(ot.text) + (ot.lastOngoingNote ? ' — ' + escapeHtml(ot.lastOngoingNote) : '') + '</span></div>');
+      // Ongoing task activity for this date (prefer detail logs, fall back to legacy rows)
+      for (var oi = 0; oi < state.ongoingLogs.length; oi++) {
+        var ol = state.ongoingLogs[oi];
+        if (ol.date !== date) continue;
+        var otl = state.allTodos.find(function(t2) { return t2.id === ol.todoId; });
+        if (otl) items.push('<div class="todo-row ongoing-row"><div class="indicator ongoing"></div><span class="txt">' + escapeHtml(otl.text) + (ol.note ? ' — ' + escapeHtml(ol.note) : '') + '</span></div>');
+      }
+      for (var oi2 = 0; oi2 < state.allTodos.length; oi2++) {
+        var ot2 = state.allTodos[oi2];
+        if (ot2.taskType === 'ongoing' && ot2.lastOngoingDate === date &&
+            !state.ongoingLogs.some(function(l2) { return l2.todoId === ot2.id && l2.date === date; })) {
+          items.push('<div class="todo-row ongoing-row"><div class="indicator ongoing"></div><span class="txt">' + escapeHtml(ot2.text) + (ot2.lastOngoingNote ? ' — ' + escapeHtml(ot2.lastOngoingNote) : '') + '</span></div>');
         }
       }
 
@@ -1528,6 +1613,9 @@
     try {
       await Sync.deleteTodo(id);
       state.allTodos.splice(idx, 1);
+      if (todo.taskType === 'ongoing') {
+        state.ongoingLogs = state.ongoingLogs.filter(function(l) { return l.todoId !== id; });
+      }
       renderCurrentView();
       if (state.modalDate) renderModalList();
       saveLocalCache();
@@ -1795,6 +1883,25 @@
   }
 
   // Increment ongoing task
+  // Recompute lastOngoingDate/lastOngoingNote from the per-day detail logs
+  // (the total count is managed separately at each mutation site).
+  async function syncOngoingLastFromLogs(todo) {
+    var logs = state.ongoingLogs.filter(function(l) { return l.todoId === todo.id; });
+    var dates = logs.map(function(l) { return l.date; }).sort();
+    var lastDate = dates.length ? dates[dates.length - 1] : null;
+    var lastNote = '';
+    if (lastDate) {
+      var last = logs.find(function(l) { return l.date === lastDate; });
+      if (last) lastNote = last.note || '';
+    }
+    await Sync.updateTodo(todo.id, {
+      lastOngoingDate: lastDate,
+      lastOngoingNote: lastNote
+    });
+    todo.lastOngoingDate = lastDate;
+    todo.lastOngoingNote = lastNote;
+  }
+
   async function handleIncrementOngoing(id) {
     var todo = state.allTodos.find(function(t) { return t.id === id; });
     if (!todo || todo.taskType !== 'ongoing') return;
@@ -1803,6 +1910,12 @@
     if (todo.lastOngoingDate === today) {
       var prevCount = Math.max((todo.ongoingCount || 1) - 1, 0);
       try {
+        // Remove today's detail log too
+        var todayLog = state.ongoingLogs.find(function(l) { return l.todoId === id && l.date === today; });
+        if (todayLog) {
+          try { await OngoingLogSync.deleteLog(todayLog.id); } catch (e) { console.warn('Delete ongoing log failed', e); }
+          state.ongoingLogs = state.ongoingLogs.filter(function(l) { return l.id !== todayLog.id; });
+        }
         await Sync.updateTodo(id, {
           ongoingCount: prevCount,
           lastOngoingDate: null,
@@ -1834,6 +1947,14 @@
       todo.ongoingCount = newCount;
       todo.lastOngoingDate = today;
       todo.lastOngoingNote = note || '';
+      // Per-day detail log — degrade gracefully if the table isn't migrated yet
+      try {
+        var log = { id: generateId(), todoId: id, date: today, note: note || '' };
+        var saved = await OngoingLogSync.addLog(log);
+        if (saved) state.ongoingLogs.push(saved);
+      } catch (e) {
+        console.warn('Ongoing detail log write failed (table may not be migrated)', e);
+      }
       renderCurrentView();
       if (state.modalDate) renderModalList();
       renderHabits();
@@ -1884,10 +2005,16 @@
       }
       return;
     }
-    var log = { id: generateId(), habitId: habitId, date: today, done: true };
+    var note = prompt('打卡备注（可选，直接确定可跳过）', '');
+    if (note === null) return;
+    var log = { id: generateId(), habitId: habitId, date: today, done: true, note: note || '' };
     try {
-      await HabitSync.addHabitLog(log);
-      state.habitLogs.push(log);
+      var saved = await HabitSync.addHabitLog(log);
+      if (!saved) {
+        Toast.show('今天已经打过卡了');
+        return;
+      }
+      state.habitLogs.push(saved);
       renderHabits();
       checkHabitAchievement(habitId);
     } catch (e) {
@@ -2120,9 +2247,13 @@
       if (state.allTodos[i].id === id) { idx = i; break; }
     }
     if (idx === -1) return;
+    var todo = state.allTodos[idx];
     try {
       await Sync.deleteTodo(id);
       state.allTodos.splice(idx, 1);
+      if (todo.taskType === 'ongoing') {
+        state.ongoingLogs = state.ongoingLogs.filter(function(l) { return l.todoId !== id; });
+      }
       renderHistory();
       saveLocalCache();
       Toast.show('已删除');
@@ -2343,9 +2474,11 @@
     else if (action.dataset.action === 'delete-habit' && type === 'habit') handleDeleteHabit(id);
     else if (action.dataset.action === 'edit-habit-name' && type === 'habit') handleEditHabitName(id);
     else if (action.dataset.action === 'edit-habit-params' && type === 'habit') handleEditHabitParams(id);
+    else if (action.dataset.action === 'view-habit-history' && type === 'habit') openTimeline('habit', id);
     else if (action.dataset.action === 'check-ongoing' && type === 'ongoing') handleIncrementOngoing(id);
     else if (action.dataset.action === 'edit-ongoing-name' && type === 'ongoing') handleEditOngoing(id);
     else if (action.dataset.action === 'edit-ongoing-params' && type === 'ongoing') handleEditOngoing(id);
+    else if (action.dataset.action === 'view-ongoing-history' && type === 'ongoing') openTimeline('ongoing', id);
     else if (action.dataset.action === 'delete-ongoing' && type === 'ongoing') {
       var idx = -1;
       for (var i = 0; i < state.allTodos.length; i++) {
@@ -2355,11 +2488,229 @@
       try {
         await Sync.deleteTodo(id);
         state.allTodos.splice(idx, 1);
+        state.ongoingLogs = state.ongoingLogs.filter(function(l) { return l.todoId !== id; });
         renderHabits();
         Toast.show('已删除');
       } catch (ex) { console.warn('Delete ongoing failed', ex); Toast.show('删除失败'); }
     }
   });
+
+  /* ==================================================================
+     TIMELINE MODAL (打卡回放: per-habit / per-ongoing history)
+     ================================================================== */
+  var timelineTarget = null; // { type: 'habit' | 'ongoing', id }
+
+  function openTimeline(type, id) {
+    timelineTarget = { type: type, id: id };
+    document.getElementById('timelineBackfillDate').value = getToday();
+    document.getElementById('timelineBackfillDate').max = getToday();
+    document.getElementById('timelineBackfillNote').value = '';
+    renderTimeline();
+    document.getElementById('timelineModal').classList.remove('hidden');
+  }
+
+  function closeTimeline() {
+    document.getElementById('timelineModal').classList.add('hidden');
+    timelineTarget = null;
+  }
+
+  function getTimelineLogs() {
+    if (!timelineTarget) return [];
+    if (timelineTarget.type === 'habit') {
+      return state.habitLogs.filter(function(l) { return l.habitId === timelineTarget.id && l.done; });
+    }
+    return state.ongoingLogs.filter(function(l) { return l.todoId === timelineTarget.id; });
+  }
+
+  function renderTimeline() {
+    if (!timelineTarget) return;
+    var isHabit = timelineTarget.type === 'habit';
+    var today = getToday();
+    var nameEl = document.getElementById('timelineTitle');
+    var statsEl = document.getElementById('timelineStats');
+    var listEl = document.getElementById('timelineList');
+    var missedEl = document.getElementById('timelineMissed');
+    var logs = getTimelineLogs();
+    var startLabel = '';
+
+    if (isHabit) {
+      var h = state.habits.find(function(x) { return x.id === timelineTarget.id; });
+      if (!h) return;
+      nameEl.textContent = h.content + ' · 打卡回放';
+      startLabel = h.startDate;
+    } else {
+      var ot = state.allTodos.find(function(x) { return x.id === timelineTarget.id; });
+      if (!ot) return;
+      nameEl.textContent = ot.text + ' · 打卡回放';
+      startLabel = ot.date;
+    }
+
+    // Stats: 累计 / 连续 / 本月 / 起始
+    var total = logs.length;
+    var thisMonth = 0;
+    var monthStr = today.substring(0, 7);
+    var logDates = {};
+    for (var i = 0; i < logs.length; i++) {
+      if (logs[i].date.substring(0, 7) === monthStr) thisMonth++;
+      logDates[logs[i].date] = true;
+    }
+    var streak = 0;
+    var d = new Date(today + 'T00:00:00');
+    if (!logDates[today]) d.setDate(d.getDate() - 1);
+    while (logDates[toDateString(d)]) {
+      streak++;
+      d.setDate(d.getDate() - 1);
+    }
+    statsEl.innerHTML =
+      '<div class="timeline-stat"><div class="stat-num">' + total + '</div><div class="stat-label">累计天数</div></div>' +
+      '<div class="timeline-stat"><div class="stat-num">' + streak + '</div><div class="stat-label">连续天数</div></div>' +
+      '<div class="timeline-stat"><div class="stat-num">' + thisMonth + '</div><div class="stat-label">本月天数</div></div>' +
+      '<div class="timeline-stat"><div class="stat-num" style="font-size:15px;">' + formatDateShort(startLabel) + '</div><div class="stat-label">起始日期</div></div>';
+
+    // Timeline list (newest first)
+    var sorted = logs.slice().sort(function(a, b) { return a.date < b.date ? 1 : -1; });
+    if (sorted.length === 0) {
+      listEl.innerHTML = '<div class="empty-state" style="padding:24px 0;"><p>还没有打卡记录</p></div>';
+    } else {
+      listEl.innerHTML = sorted.map(function(l) {
+        return '<div class="timeline-item" data-id="' + l.id + '">' +
+          '<div class="timeline-item-date">' + formatDateShort(l.date) + ' ' + getWeekday(l.date) + '</div>' +
+          (l.note ? '<div class="timeline-item-note">' + escapeHtml(l.note) + '</div>' : '') +
+          '<button class="timeline-item-delete" data-action="timeline-delete" title="删除这条记录">' +
+            '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+          '</button>' +
+        '</div>';
+      }).join('');
+    }
+
+    // Missed days — only meaningful for daily habits
+    missedEl.innerHTML = '';
+    if (isHabit) {
+      var hb = state.habits.find(function(x) { return x.id === timelineTarget.id; });
+      if (hb && hb.periodType === 'daily') {
+        var missed = [];
+        var cur = new Date(hb.startDate + 'T00:00:00');
+        var todayD = new Date(today + 'T00:00:00');
+        var guard = 0;
+        while (cur <= todayD && guard < 2000) {
+          var ds = toDateString(cur);
+          if (!logDates[ds]) missed.push(ds);
+          cur.setDate(cur.getDate() + 1);
+          guard++;
+        }
+        var show = missed.slice(-60).reverse(); // most recent 60, newest first
+        var hiddenCount = missed.length - show.length;
+        if (show.length > 0) {
+          missedEl.innerHTML =
+            '<div class="timeline-missed-title">漏卡日期（共' + missed.length + '天' + (hiddenCount > 0 ? '，仅显示最近60天' : '') + '）</div>' +
+            '<div class="timeline-missed-list">' + show.map(function(ds) {
+              return '<span class="missed-chip">' + formatDateShort(ds) + '</span>';
+            }).join('') + '</div>';
+        }
+      }
+    }
+  }
+
+  // Delete a single timeline entry
+  async function handleTimelineDelete(logId) {
+    if (!timelineTarget) return;
+    var isHabit = timelineTarget.type === 'habit';
+    try {
+      if (isHabit) {
+        await HabitSync.deleteHabitLog(logId);
+        state.habitLogs = state.habitLogs.filter(function(l) { return l.id !== logId; });
+      } else {
+        await OngoingLogSync.deleteLog(logId);
+        state.ongoingLogs = state.ongoingLogs.filter(function(l) { return l.id !== logId; });
+        var todo = state.allTodos.find(function(t) { return t.id === timelineTarget.id; });
+        if (todo) {
+          var prevCount = Math.max((todo.ongoingCount || 0) - 1, 0);
+          await Sync.updateTodo(todo.id, { ongoingCount: prevCount });
+          todo.ongoingCount = prevCount;
+          await syncOngoingLastFromLogs(todo);
+        }
+      }
+      renderTimeline();
+      renderHabits();
+      saveLocalCache();
+      Toast.show('已删除');
+    } catch (e) {
+      console.warn('Timeline delete failed', e);
+      Toast.show('删除失败');
+    }
+  }
+
+  // Backfill a check-in for a past date
+  async function handleTimelineBackfill() {
+    if (!timelineTarget) return;
+    var date = document.getElementById('timelineBackfillDate').value;
+    var note = document.getElementById('timelineBackfillNote').value.trim();
+    var today = getToday();
+    if (!date) { Toast.show('请选择日期'); return; }
+    if (date > today) { Toast.show('不能补未来的打卡'); return; }
+    var isHabit = timelineTarget.type === 'habit';
+    try {
+      if (isHabit) {
+        if (state.habitLogs.some(function(l) { return l.habitId === timelineTarget.id && l.date === date && l.done; })) {
+          Toast.show('该日期已打卡');
+          return;
+        }
+        var log = { id: generateId(), habitId: timelineTarget.id, date: date, done: true, note: note };
+        var saved = await HabitSync.addHabitLog(log);
+        if (!saved) { Toast.show('该日期已打卡'); return; }
+        state.habitLogs.push(saved);
+      } else {
+        if (state.ongoingLogs.some(function(l) { return l.todoId === timelineTarget.id && l.date === date; })) {
+          Toast.show('该日期已打卡');
+          return;
+        }
+        var log2 = { id: generateId(), todoId: timelineTarget.id, date: date, note: note };
+        var saved2;
+        try {
+          saved2 = await OngoingLogSync.addLog(log2);
+        } catch (e) {
+          if (e && e.code === '23505') { Toast.show('该日期已打卡'); return; }
+          Toast.show('补打卡失败（明细表可能未迁移，请先执行 SQL）');
+          return;
+        }
+        if (!saved2) { Toast.show('该日期已打卡'); return; }
+        state.ongoingLogs.push(saved2);
+        var todo = state.allTodos.find(function(t) { return t.id === timelineTarget.id; });
+        if (todo) {
+          var newCount = (todo.ongoingCount || 0) + 1;
+          await Sync.updateTodo(todo.id, { ongoingCount: newCount });
+          todo.ongoingCount = newCount;
+          await syncOngoingLastFromLogs(todo);
+        }
+      }
+      document.getElementById('timelineBackfillNote').value = '';
+      document.getElementById('timelineBackfillDate').value = today;
+      renderTimeline();
+      renderHabits();
+      saveLocalCache();
+      Toast.show('已补打卡 ' + date);
+    } catch (e) {
+      console.warn('Backfill failed', e);
+      if (e && e.code === '23505') { Toast.show('该日期已打卡'); return; }
+      Toast.show('补打卡失败');
+    }
+  }
+
+  // Timeline modal events
+  document.getElementById('timelineModal').addEventListener('click', function(e) {
+    if (e.target === this) {
+      closeTimeline();
+      return;
+    }
+    var action = e.target.closest('[data-action]');
+    if (!action || !timelineTarget) return;
+    if (action.dataset.action === 'timeline-delete') {
+      var item = action.closest('.timeline-item');
+      if (item) handleTimelineDelete(item.dataset.id);
+    }
+  });
+  document.getElementById('timelineClose').addEventListener('click', closeTimeline);
+  document.getElementById('timelineBackfillBtn').addEventListener('click', handleTimelineBackfill);
 
   // Habit view toggle
   document.getElementById('habitViewActive').addEventListener('click', function() {
@@ -2488,6 +2839,7 @@
     state.allTodos = [];
     state.habits = [];
     state.habitLogs = [];
+    state.ongoingLogs = [];
     state.historyExpanded = {};
     state.historyPickedDate = null;
     state.historyEditMode = false;
@@ -2500,10 +2852,12 @@
     state.statsYear = new Date().getFullYear();
     state.modalDate = null;
     state.deadlinePicker = null;
+    timelineTarget = null;
     habitReminderShownFor = null;
     loadedOnce = false;
     closeModal();
     closeDeadlinePicker();
+    closeTimeline();
   }
 
   document.getElementById('logoutBtn').addEventListener('click', async function() {
@@ -2628,10 +2982,12 @@
       try {
         state.habits = await HabitSync.fetchHabits();
         state.habitLogs = await HabitSync.fetchHabitLogs();
+        state.ongoingLogs = await OngoingLogSync.fetchLogs();
       } catch (e) {
         console.warn('Fetch habits failed', e);
         state.habits = [];
         state.habitLogs = [];
+        state.ongoingLogs = [];
       }
 
       // Load lastActiveDate from localStorage (persisted across sessions)
@@ -2703,6 +3059,7 @@
       try {
         state.habits = await HabitSync.fetchHabits();
         state.habitLogs = await HabitSync.fetchHabitLogs();
+        state.ongoingLogs = await OngoingLogSync.fetchLogs();
       } catch (e) { /* keep the previous habit data */ }
       localCache.todos = state.allTodos;
       saveLocalCache();

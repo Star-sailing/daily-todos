@@ -296,6 +296,28 @@
     </div>
   </div>
 
+  <!-- ==================== 打卡回放弹窗 ==================== -->
+  <div id="timelineModal" class="modal-overlay hidden">
+    <div class="modal-sheet">
+      <div class="modal-header">
+        <h2 id="timelineTitle" class="modal-title"></h2>
+        <button id="timelineClose" class="btn-icon" aria-label="关闭">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div id="timelineStats" class="timeline-stats"></div>
+      <div class="add-bar" style="margin: 0 16px 12px;">
+        <input type="date" id="timelineBackfillDate" class="add-input" style="max-width:150px;flex-shrink:0;">
+        <input type="text" id="timelineBackfillNote" class="add-input" placeholder="备注（可选）" maxlength="100" autocomplete="off">
+        <button id="timelineBackfillBtn" class="btn btn-add" style="flex-shrink:0;">补打卡</button>
+      </div>
+      <div class="timeline-scroll">
+        <div id="timelineList" class="timeline-list"></div>
+        <div id="timelineMissed" class="timeline-missed"></div>
+      </div>
+    </div>
+  </div>
+
   <!-- ==================== Toast 容器 ==================== -->
   <div id="toastContainer" class="toast-container"></div>
 

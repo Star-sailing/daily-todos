@@ -20,6 +20,7 @@ daily-todos/
   app.js          # 全部业务逻辑（IIFE）
   manifest.json   # PWA 安装配置
   sw.js           # Service Worker（network-first, v5）
+  migration_ongoing_logs.sql  # 打卡回放功能数据库迁移（SQL Editor 执行）
 ```
 
 ## Supabase 配置
@@ -30,7 +31,9 @@ daily-todos/
 - **数据库表 `habits`：**
   `id(UUID PK)`, `user_id(UUID FK)`, `content`, `period_type`, `period_count`, `total_length`, `start_date`, `created_at`
 - **数据库表 `habit_logs`：**
-  `id(UUID PK)`, `habit_id(UUID FK)`, `user_id(UUID FK)`, `date`, `done`, `UNIQUE(habit_id, date)`
+  `id(UUID PK)`, `habit_id(UUID FK)`, `user_id(UUID FK)`, `date`, `done`, `note`, `UNIQUE(habit_id, date)`
+- **数据库表 `ongoing_logs`（持续任务打卡明细）：**
+  `id(UUID PK)`, `todo_id(UUID FK)`, `user_id(UUID FK)`, `date`, `note`, `UNIQUE(todo_id, date)`
 - 所有表 RLS 已开启，INSERT 触发器自动填充 `user_id = auth.uid()`
 - **认证：** 邮箱+密码，邮件确认已关闭
 - **后台：** https://supabase.com/dashboard/project/inpfdizaklxdlpawzcge
@@ -64,12 +67,17 @@ daily-todos/
 ### 打卡板块（第 4 个 Tab）
 - **模式切换：** 当前习惯 / 打卡记录
 - **习惯：** 每日/每周/每月周期，可配间隔、总次数、起始日期
-  - 进度条 + 打卡按钮，显示起始年月日
+  - 进度条 + 打卡按钮，显示起始年月日，打卡时可填可选备注
   - 点击名称编辑名称，✏️ 按钮编辑参数
   - 已打卡可再点取消
 - **持续任务：** 自由打卡无固定频率，+1 按钮 + 每日笔记，显示起始年月日
   - 点击名称编辑名称，已打卡可再点取消
-- **打卡记录：** 按日期卡片展示习惯打卡 + 持续任务活动
+- **⏱ 历史回放：** 每个习惯/持续任务卡片上的时钟按钮打开回放面板
+  - 统计：累计天数 / 连续天数 / 本月天数 / 起始日期
+  - 时间线：按日期倒序列出每次打卡及备注，单条可删除
+  - 漏卡提示：每日型习惯显示从开始日期起未打卡的日期（最近60天）
+  - 补打卡：选择过去日期 + 备注补记
+- **打卡记录：** 按日期卡片展示习惯打卡（含备注）+ 持续任务每日明细（含当天）
 - 登录时未打卡习惯弹出 Toast 提醒
 - 达成目标时弹出 🎉 成就提示
 
@@ -111,6 +119,12 @@ CREATE TABLE IF NOT EXISTS habit_logs (
 );
 -- + RLS policies + INSERT triggers for auth.uid()
 ```
+
+### 打卡回放功能迁移（2026-08-18）
+完整幂等脚本见 `migration_ongoing_logs.sql`，在 Supabase SQL Editor 中整体运行：
+1. `habit_logs` 增加 `note TEXT DEFAULT ''` 列
+2. 新建 `ongoing_logs` 表（含 RLS 策略 + user_id 插入触发器）
+3. 回填现有持续任务的最后一次打卡到明细表（更早历史未存储，无法恢复）
 
 ## 开发流程
 ```bash
