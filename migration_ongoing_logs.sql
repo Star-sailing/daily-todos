@@ -36,9 +36,13 @@ CREATE POLICY "ongoing_logs_delete_own" ON ongoing_logs
   FOR DELETE USING (user_id = auth.uid());
 
 -- 4) 插入时自动填充 user_id 的触发器（与其他表一致）
+--    仅当未显式提供 user_id 时才填充 auth.uid()，避免在 SQL Editor
+--    等无 JWT 环境下把已有的 user_id 覆盖为 NULL
 CREATE OR REPLACE FUNCTION public.handle_new_ongoing_log() RETURNS TRIGGER AS $$
 BEGIN
-  NEW.user_id := auth.uid();
+  IF NEW.user_id IS NULL THEN
+    NEW.user_id := auth.uid();
+  END IF;
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
