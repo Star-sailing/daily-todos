@@ -600,8 +600,10 @@
     }
   }
 
-  // Collapse duplicate carry copies and propagate a completed task's "done"
-  // state across its chain. Runs on login / midnight before carry-over.
+  // Collapse accidental duplicate copies within a chain. Runs on login /
+  // midnight before carry-over. Important: it must NOT delete the per-day
+  // history rows — history keeps showing unfinished tasks on each day they
+  // were pending. It only removes extra rows that share the same chain+date.
   async function consolidateCarryChains(todos) {
     var groups = {};
     for (var i = 0; i < todos.length; i++) {
@@ -616,26 +618,24 @@
       var group = groups[key];
       if (group.length <= 1) continue;
 
-      // A chain that contains any completed row is finished history: keep every
-      // row untouched. Never auto-propagate "done" to the other copies — that
-      // logic corrupted historical records when it ran on login.
+      // A chain with any completed row is finished history: keep every row.
       var hasDone = false;
       for (var d = 0; d < group.length; d++) {
         if (group[d].done) { hasDone = true; break; }
       }
       if (hasDone) continue;
 
-      // All-undone duplicate copies: keep the earliest (the original), delete the rest.
-      group.sort(function(a, b) {
-        var ra = a.carriedFrom || a.date;
-        var rb = b.carriedFrom || b.date;
-        if (ra !== rb) return ra < rb ? -1 : 1;
-        return a.date < b.date ? -1 : 1;
-      });
-      for (var k = 1; k < group.length; k++) {
+      // All-undone chain: keep at most one row per date. Clean up accidental
+      // double copies (e.g. concurrent devices) without touching history.
+      var seenDates = {};
+      for (var k = 0; k < group.length; k++) {
         var dup = group[k];
-        try { await Sync.deleteTodo(dup.id); } catch (e) { /* ignore */ }
-        todos = todos.filter(function(tt) { return tt.id !== dup.id; });
+        if (seenDates[dup.date]) {
+          try { await Sync.deleteTodo(dup.id); } catch (e) { /* ignore */ }
+          todos = todos.filter(function(tt) { return tt.id !== dup.id; });
+        } else {
+          seenDates[dup.date] = true;
+        }
       }
     }
     return todos;
@@ -644,26 +644,29 @@
   async function runCarryOver(todos) {
     var today = getToday();
 
-    // Move every undone past todo to today. Idempotent — safe to run repeatedly.
-    var todosToMove = [];
+    // Copy every undone ORIGINAL todo (carriedFrom === null) from a past date
+    // forward to today. The original row STAYS on its date so per-date history
+    // keeps showing the unfinished task; only a fresh copy lands on today.
+    var originals = [];
     for (var i = 0; i < todos.length; i++) {
       var t = todos[i];
       if (t.taskType === 'ongoing' || t.taskType === 'someday') continue;
-      if (t.date >= today) continue;
+      if (t.carriedFrom !== null) continue;
       if (t.done || t.status === 'done') continue;
-      todosToMove.push(t);
+      if (t.date >= today) continue;
+      originals.push(t);
     }
+    originals.sort(function(a, b) { return a.date < b.date ? -1 : 1; });
 
-    if (todosToMove.length === 0) {
+    if (originals.length === 0) {
       localCache.lastActiveDate = today;
       saveLocalCache();
       return todos;
     }
 
     // Collect carry-chain keys already on today to deduplicate. Dedup is per
-    // chain, not per text: two same-text tasks in different chains (e.g. a
-    // "健身" started on 8.10 and another on 8.15) are independent and both
-    // must carry over.
+    // chain, not per text: two same-text tasks in different chains are
+    // independent and both must carry over.
     var todayChainKeys = {};
     for (var j = 0; j < todos.length; j++) {
       if (todos[j].date === today && todos[j].taskType !== 'ongoing' && todos[j].taskType !== 'someday') {
@@ -672,35 +675,120 @@
     }
 
     var maxOrder = getMaxOrder(todos, today);
-    for (var m = 0; m < todosToMove.length; m++) {
-      var todo = todosToMove[m];
+    var newTodos = [];
+    for (var m = 0; m < originals.length; m++) {
+      var todo = originals[m];
       var chainKey = carryChainKey(todo, todos);
       if (todayChainKeys[chainKey]) continue; // Same chain already on today
 
-      var oldDate = todo.date;
-      // MOVE: update the todo's date to today instead of creating a copy
-      todo.date = today;
-      if (!todo.carriedFrom) {
-        todo.carriedFrom = oldDate;
+      // Inherit flags from the newest row of the chain so pin/highlight/DDL stick
+      var chainRows = todos.filter(function(x) {
+        return x.taskType === 'todo' && carryChainKey(x, todos) === chainKey;
+      });
+      var newest = null;
+      for (var c = 0; c < chainRows.length; c++) {
+        if (!newest || chainRows[c].date > newest.date) newest = chainRows[c];
       }
-      maxOrder++;
-      todo.order = maxOrder;
-      todayChainKeys[chainKey] = true;
+      var src = newest || todo;
 
-      // Sync the move to database
+      maxOrder++;
+      newTodos.push({
+        id: generateId(),
+        text: todo.text,
+        done: false,
+        status: 'active',
+        date: today,
+        createdAt: new Date().toISOString(),
+        carriedFrom: todo.date,
+        order: maxOrder,
+        pinned: src.pinned || false,
+        highlighted: src.highlighted || false,
+        deadline: src.deadline || null,
+        hasDeadline: src.hasDeadline || false,
+        taskType: 'todo',
+        ongoingCount: 0,
+        lastOngoingDate: null,
+        lastOngoingNote: ''
+      });
+      todayChainKeys[chainKey] = true;
+    }
+
+    if (newTodos.length > 0) {
       try {
-        await Sync.updateTodo(todo.id, {
-          date: today,
-          carriedFrom: todo.carriedFrom,
-          order: todo.order
-        });
+        await Sync.batchAdd(newTodos);
       } catch (e) {
-        console.warn('Carry-over move sync failed for', todo.id, e);
+        console.warn('Carry-over copy sync failed, using local only', e);
       }
+      todos = todos.concat(newTodos);
     }
 
     localCache.lastActiveDate = today;
     saveLocalCache();
+    return todos;
+  }
+
+  // One-time repair for MOVE-era data: the old carry-over MOVED each undone
+  // todo forward, leaving a single "today" row (carriedFrom set) and no
+  // per-day history. Materialize the missing days so history shows the task
+  // as pending on every date it existed.
+  async function repairMovedHistory(todos) {
+    var byDate = {};
+    for (var i = 0; i < todos.length; i++) {
+      if (todos[i].taskType !== 'todo') continue;
+      if (!byDate[todos[i].date]) byDate[todos[i].date] = [];
+      byDate[todos[i].date].push(todos[i]);
+    }
+
+    var toAdd = [];
+    for (var j = 0; j < todos.length; j++) {
+      var t = todos[j];
+      if (t.taskType !== 'todo' || t.done || !t.carriedFrom) continue;
+      if (t.date <= t.carriedFrom) continue;
+
+      var start = new Date(t.carriedFrom + 'T00:00:00');
+      var end = new Date(t.date + 'T00:00:00');
+      var cur = new Date(start);
+      while (cur < end) {
+        var ds = toDateString(cur);
+        var exists = false;
+        var rows = byDate[ds];
+        if (rows) {
+          for (var r = 0; r < rows.length; r++) {
+            if (normalizeTodoText(rows[r].text) === normalizeTodoText(t.text)) { exists = true; break; }
+          }
+        }
+        if (!exists) {
+          toAdd.push({
+            id: generateId(),
+            text: t.text,
+            done: false,
+            status: 'active',
+            date: ds,
+            createdAt: new Date().toISOString(),
+            carriedFrom: (ds === t.carriedFrom) ? null : t.carriedFrom,
+            order: 0,
+            pinned: t.pinned || false,
+            highlighted: t.highlighted || false,
+            deadline: t.deadline || null,
+            hasDeadline: t.hasDeadline || false,
+            taskType: 'todo',
+            ongoingCount: 0,
+            lastOngoingDate: null,
+            lastOngoingNote: ''
+          });
+        }
+        cur.setDate(cur.getDate() + 1);
+      }
+    }
+
+    if (toAdd.length > 0) {
+      try {
+        await Sync.batchAdd(toAdd);
+      } catch (e) {
+        console.warn('History repair sync failed', e);
+      }
+      todos = todos.concat(toAdd);
+    }
     return todos;
   }
 
@@ -1035,6 +1123,17 @@
     var items = state.allTodos.filter(function(t) {
       return t.taskType === 'todo' && !t.done && t.date <= today;
     });
+    // Deduplicate by carry chain: one entry per logical task (the newest row,
+    // which is the current "live" copy). History rows stay visible in the
+    // history view, not here.
+    items.sort(function(a, b) { return a.date < b.date ? 1 : -1; });
+    var seen = {};
+    items = items.filter(function(t) {
+      var key = carryChainKey(t, state.allTodos);
+      if (seen[key]) return false;
+      seen[key] = true;
+      return true;
+    });
     items.sort(function(a, b) {
       var ra = a.carriedFrom || a.date;
       var rb = b.carriedFrom || b.date;
@@ -1148,14 +1247,21 @@
 
   function renderStats() {
     var monthStr = state.statsYear + '-' + String(state.statsMonth + 1).padStart(2, '0');
-    var totalInMonth = 0, doneInMonth = 0;
+    // Count by carry chain, not by row: a task pending across N days should
+    // count once per logical task in the month.
+    var chains = {};
     for (var i = 0; i < state.allTodos.length; i++) {
       var t = state.allTodos[i];
       if (t.taskType === 'ongoing' || t.taskType === 'someday') continue;
-      if (t.date.substring(0, 7) === monthStr) {
-        totalInMonth++;
-        if (t.done) doneInMonth++;
-      }
+      if (t.date.substring(0, 7) !== monthStr) continue;
+      var key = carryChainKey(t, state.allTodos);
+      if (!chains[key]) chains[key] = { done: false };
+      if (t.done) chains[key].done = true;
+    }
+    var totalInMonth = 0, doneInMonth = 0;
+    for (var k in chains) {
+      totalInMonth++;
+      if (chains[k].done) doneInMonth++;
     }
 
     document.getElementById('statsMonthLabel').textContent = state.statsYear + '年' + (state.statsMonth + 1) + '月';
@@ -1602,6 +1708,29 @@
     }
   }
 
+  // Delete a todo. When deleting the newest row of a carry chain (the live
+  // copy on today / backlog), remove the whole chain — the task is cancelled.
+  // When deleting an older history row (edit mode), remove only that row.
+  async function deleteTodoWithChain(todo) {
+    var chain = getCarryChainTodos(todo);
+    var newest = null;
+    for (var i = 0; i < chain.length; i++) {
+      if (!newest || chain[i].date > newest.date) newest = chain[i];
+    }
+    var idsToDelete = (newest && newest.id === todo.id)
+      ? chain.map(function(t) { return t.id; })
+      : [todo.id];
+    for (var d = 0; d < idsToDelete.length; d++) {
+      await Sync.deleteTodo(idsToDelete[d]);
+    }
+    var removeSet = {};
+    for (var r = 0; r < idsToDelete.length; r++) removeSet[idsToDelete[r]] = true;
+    state.allTodos = state.allTodos.filter(function(x) { return !removeSet[x.id]; });
+    if (todo.taskType === 'ongoing') {
+      state.ongoingLogs = state.ongoingLogs.filter(function(l) { return l.todoId !== todo.id; });
+    }
+  }
+
   // Delete todo
   async function handleDelete(id) {
     var idx = -1;
@@ -1611,11 +1740,7 @@
     if (idx === -1) return;
     var todo = state.allTodos[idx];
     try {
-      await Sync.deleteTodo(id);
-      state.allTodos.splice(idx, 1);
-      if (todo.taskType === 'ongoing') {
-        state.ongoingLogs = state.ongoingLogs.filter(function(l) { return l.todoId !== id; });
-      }
+      await deleteTodoWithChain(todo);
       renderCurrentView();
       if (state.modalDate) renderModalList();
       saveLocalCache();
@@ -2249,11 +2374,7 @@
     if (idx === -1) return;
     var todo = state.allTodos[idx];
     try {
-      await Sync.deleteTodo(id);
-      state.allTodos.splice(idx, 1);
-      if (todo.taskType === 'ongoing') {
-        state.ongoingLogs = state.ongoingLogs.filter(function(l) { return l.todoId !== id; });
-      }
+      await deleteTodoWithChain(todo);
       renderHistory();
       saveLocalCache();
       Toast.show('已删除');
@@ -2996,8 +3117,9 @@
       // Migrate existing todos that lack a status field
       await migrateTodosStatus(todos);
 
-      // Collapse duplicate carry copies + propagate done status
+      // Collapse accidental same-date duplicates + materialize missing history
       todos = await consolidateCarryChains(todos);
+      todos = await repairMovedHistory(todos);
 
       state.allTodos = todos;
       todos = await runCarryOver(todos);
@@ -3048,6 +3170,7 @@
     try {
       var todos = await Sync.fetchTodos();
       todos = await consolidateCarryChains(todos);
+      todos = await repairMovedHistory(todos);
       state.allTodos = todos;
       todos = await runCarryOver(todos);
       state.allTodos = todos;
