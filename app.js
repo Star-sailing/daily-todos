@@ -420,6 +420,12 @@
         throw result.error;
       }
       return log;
+    },
+
+    async updateLog(id, note) {
+      if (!supabase) return;
+      var result = await supabase.from('habit_logs').update({ note: note }).eq('id', id);
+      if (result.error) throw result.error;
     }
   };
 
@@ -465,6 +471,12 @@
     async deleteLog(id) {
       if (!supabase) return;
       var result = await supabase.from('ongoing_logs').delete().eq('id', id);
+      if (result.error) throw result.error;
+    },
+
+    async updateLog(id, note) {
+      if (!supabase) return;
+      var result = await supabase.from('ongoing_logs').update({ note: note }).eq('id', id);
       if (result.error) throw result.error;
     }
   };
@@ -2060,21 +2072,21 @@
       }
       return;
     }
-    var note = prompt('今天做了什么？（可选，简短记录）', '');
-    if (note === null) return;
+    // One-tap check-in: no native prompt (unreliable in mobile PWAs).
+    // Notes can be added later in the 回放 panel.
     var newCount = (todo.ongoingCount || 0) + 1;
     try {
       await Sync.updateTodo(id, {
         ongoingCount: newCount,
         lastOngoingDate: today,
-        lastOngoingNote: note || ''
+        lastOngoingNote: ''
       });
       todo.ongoingCount = newCount;
       todo.lastOngoingDate = today;
-      todo.lastOngoingNote = note || '';
+      todo.lastOngoingNote = '';
       // Per-day detail log — degrade gracefully if the table isn't migrated yet
       try {
-        var log = { id: generateId(), todoId: id, date: today, note: note || '' };
+        var log = { id: generateId(), todoId: id, date: today, note: '' };
         var saved = await OngoingLogSync.addLog(log);
         if (saved) state.ongoingLogs.push(saved);
       } catch (e) {
@@ -2130,9 +2142,9 @@
       }
       return;
     }
-    var note = prompt('打卡备注（可选，直接确定可跳过）', '');
-    if (note === null) return;
-    var log = { id: generateId(), habitId: habitId, date: today, done: true, note: note || '' };
+    // One-tap check-in: no native prompt (unreliable in mobile PWAs).
+    // Notes can be added later in the 回放 panel.
+    var log = { id: generateId(), habitId: habitId, date: today, done: true, note: '' };
     try {
       var saved = await HabitSync.addHabitLog(log);
       if (!saved) {
@@ -2620,6 +2632,7 @@
      TIMELINE MODAL (打卡回放: per-habit / per-ongoing history)
      ================================================================== */
   var timelineTarget = null; // { type: 'habit' | 'ongoing', id }
+  var timelineNoteEditId = null; // log id whose note is currently being edited
 
   function openTimeline(type, id) {
     timelineTarget = { type: type, id: id };
@@ -2633,6 +2646,7 @@
   function closeTimeline() {
     document.getElementById('timelineModal').classList.add('hidden');
     timelineTarget = null;
+    timelineNoteEditId = null;
   }
 
   function getTimelineLogs() {
@@ -2694,9 +2708,25 @@
       listEl.innerHTML = '<div class="empty-state" style="padding:24px 0;"><p>还没有打卡记录</p></div>';
     } else {
       listEl.innerHTML = sorted.map(function(l) {
+        var noteHtml;
+        if (timelineNoteEditId === l.id) {
+          noteHtml = '<div class="timeline-note-edit">' +
+            '<input class="timeline-note-input" id="timelineNoteInput" value="' + escapeHtml(l.note || '') + '" placeholder="备注...">' +
+            '<button class="timeline-note-btn" data-action="timeline-note-save">保存</button>' +
+            '<button class="timeline-note-btn" data-action="timeline-note-cancel">取消</button>' +
+          '</div>';
+        } else {
+          noteHtml = '<div class="timeline-item-note' + (l.note ? '' : ' empty') + '">' +
+            (l.note ? escapeHtml(l.note) : '点击 ✎ 添加备注') +
+          '</div>';
+        }
         return '<div class="timeline-item" data-id="' + l.id + '">' +
           '<div class="timeline-item-date">' + formatDateShort(l.date) + ' ' + getWeekday(l.date) + '</div>' +
-          (l.note ? '<div class="timeline-item-note">' + escapeHtml(l.note) + '</div>' : '') +
+          noteHtml +
+          (timelineNoteEditId === l.id ? '' :
+            '<button class="timeline-item-edit" data-action="timeline-edit-note" title="编辑备注">' +
+              '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>' +
+            '</button>') +
           '<button class="timeline-item-delete" data-action="timeline-delete" title="删除这条记录">' +
             '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
           '</button>' +
@@ -2817,6 +2847,35 @@
     }
   }
 
+  // Save an edited note in the timeline
+  async function handleTimelineNoteSave() {
+    if (!timelineTarget || !timelineNoteEditId) return;
+    var input = document.getElementById('timelineNoteInput');
+    var note = input ? input.value.trim() : '';
+    var logId = timelineNoteEditId;
+    var isHabit = timelineTarget.type === 'habit';
+    try {
+      if (isHabit) {
+        await HabitSync.updateLog(logId, note);
+        var hl = state.habitLogs.find(function(l) { return l.id === logId; });
+        if (hl) hl.note = note;
+      } else {
+        await OngoingLogSync.updateLog(logId, note);
+        var ol = state.ongoingLogs.find(function(l) { return l.id === logId; });
+        if (ol) ol.note = note;
+        var todo = state.allTodos.find(function(t) { return t.id === timelineTarget.id; });
+        if (todo) await syncOngoingLastFromLogs(todo);
+      }
+      timelineNoteEditId = null;
+      renderTimeline();
+      renderHabits();
+      saveLocalCache();
+    } catch (e) {
+      console.warn('Note save failed', e);
+      Toast.show('保存失败');
+    }
+  }
+
   // Timeline modal events
   document.getElementById('timelineModal').addEventListener('click', function(e) {
     if (e.target === this) {
@@ -2828,6 +2887,14 @@
     if (action.dataset.action === 'timeline-delete') {
       var item = action.closest('.timeline-item');
       if (item) handleTimelineDelete(item.dataset.id);
+    } else if (action.dataset.action === 'timeline-edit-note') {
+      var item2 = action.closest('.timeline-item');
+      if (item2) { timelineNoteEditId = item2.dataset.id; renderTimeline(); }
+    } else if (action.dataset.action === 'timeline-note-save') {
+      handleTimelineNoteSave();
+    } else if (action.dataset.action === 'timeline-note-cancel') {
+      timelineNoteEditId = null;
+      renderTimeline();
     }
   });
   document.getElementById('timelineClose').addEventListener('click', closeTimeline);
@@ -2974,6 +3041,7 @@
     state.modalDate = null;
     state.deadlinePicker = null;
     timelineTarget = null;
+    timelineNoteEditId = null;
     habitReminderShownFor = null;
     loadedOnce = false;
     closeModal();
