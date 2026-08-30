@@ -157,6 +157,59 @@ input, button {
   color: var(--text-secondary);
 }
 
+.auth-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 18px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.auth-footer .btn-link {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.auth-footer-sep {
+  opacity: 0.5;
+}
+
+/* ============================
+   Manual / Feedback modals
+   ============================ */
+.manual-body {
+  padding: 0 16px 20px;
+  overflow-y: auto;
+  font-size: 14px;
+  color: var(--text);
+  line-height: 1.7;
+}
+
+.manual-body h3 {
+  font-size: 14px;
+  font-weight: 700;
+  margin: 12px 0 2px;
+  color: var(--text);
+}
+
+.manual-body p {
+  margin: 0 0 4px;
+  color: var(--text-secondary);
+}
+
+.feedback-link {
+  display: inline-block;
+  margin-top: 10px;
+  padding: 10px 16px;
+  background: var(--primary);
+  color: #fff;
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 14px;
+}
+
 /* ============================
    Buttons
    ============================ */

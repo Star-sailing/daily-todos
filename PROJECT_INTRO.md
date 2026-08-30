@@ -27,7 +27,7 @@ daily-todos/
 - **Project URL:** https://inpfdizaklxdlpawzcge.supabase.co
 - **Anon Key:** 见 app.js 第 8 行
 - **数据库表 `todos`：**
-  `id(UUID PK)`, `user_id(UUID FK)`, `text`, `done`, `date`, `created_at`, `carried_from`, `sort_order`, `pinned`, `highlighted`, `deadline`, `has_deadline`, `task_type`, `ongoing_count`, `last_ongoing_date`, `last_ongoing_note`
+  `id(UUID PK)`, `user_id(UUID FK)`, `text`, `done`, `date`, `created_at`, `carried_from`, `sort_order`, `pinned`, `highlighted`, `deadline`, `has_deadline`, `task_type`, `ongoing_count`, `last_ongoing_date`, `last_ongoing_note`, `completed_date`
 - **数据库表 `habits`：**
   `id(UUID PK)`, `user_id(UUID FK)`, `content`, `period_type`, `period_count`, `total_length`, `start_date`, `created_at`
 - **数据库表 `habit_logs`：**
@@ -51,6 +51,7 @@ daily-todos/
 - 每天把未完成的原始待办**复制**一份到今天（原记录保留在当天历史中，不再"移动"）
 - 按原始行 id 识别顺延链，同名任务互不干扰；今天只保留每条链的一份副本
 - 徽章显示"从X月X日开始，已拖N天"
+- **完成语义**：勾掉一个任务只标记"当天那条"为完成，过去几天保持未完成；根源行记 `completed_date` 停止继续顺延
 - 午夜 60 秒检测自动触发；历史记录按天保留未完成任务
 
 ### 历史视图
@@ -65,19 +66,19 @@ daily-todos/
 
 ### 日历视图
 - 月份网格，彩色横线标记（蓝=未来/绿=全完成/橙=有未完成）
-- 独立月度统计面板，可前后翻月
+- 独立月度统计面板，可前后翻月；**完成率按"天"累加**：Σ每天完成数 ÷ Σ每天任务数（例如 (1+2)/(3+4)）
 
 ### 打卡板块（第 4 个 Tab）
 - **模式切换：** 当前习惯 / 打卡记录
 - **习惯：** 每日/每周/每月周期，可配间隔、总次数、起始日期
-  - 进度条 + 打卡按钮，显示起始年月日，打卡时可填可选备注
+  - 进度条 + 一键打卡按钮，显示起始年月日
   - 点击名称编辑名称，✏️ 按钮编辑参数
   - 已打卡可再点取消
-- **持续任务：** 自由打卡无固定频率，+1 按钮 + 每日笔记，显示起始年月日
+- **持续任务：** 自由打卡无固定频率，一键 +1 打卡，显示起始年月日
   - 点击名称编辑名称，已打卡可再点取消
 - **⏱ 历史回放：** 每个习惯/持续任务卡片上的时钟按钮打开回放面板
   - 统计：累计天数 / 连续天数 / 本月天数 / 起始日期
-  - 时间线：按日期倒序列出每次打卡及备注，单条可删除
+  - 时间线：按日期倒序列出每次打卡，✎ 编辑备注，单条可删除
   - 漏卡提示：每日型习惯显示从开始日期起未打卡的日期（最近60天）
   - 补打卡：选择过去日期 + 备注补记
 - **打卡记录：** 按日期卡片展示习惯打卡（含备注）+ 持续任务每日明细（含当天）
@@ -128,6 +129,12 @@ CREATE TABLE IF NOT EXISTS habit_logs (
 1. `habit_logs` 增加 `note TEXT DEFAULT ''` 列
 2. 新建 `ongoing_logs` 表（含 RLS 策略 + user_id 插入触发器）
 3. 回填现有持续任务的最后一次打卡到明细表（更早历史未存储，无法恢复）
+
+### 完成率按天统计迁移
+脚本见 `migration_completed_date.sql`：
+```sql
+ALTER TABLE todos ADD COLUMN IF NOT EXISTS completed_date DATE;
+```
 
 ## 开发流程
 ```bash

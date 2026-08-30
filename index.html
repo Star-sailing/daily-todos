@@ -70,6 +70,12 @@
         <button id="switchAuthBtn" class="btn-link">去注册</button>
       </p>
     </div>
+
+    <div class="auth-footer">
+      <button id="manualBtn" class="btn-link">使用说明</button>
+      <span class="auth-footer-sep">·</span>
+      <button id="feedbackBtn" class="btn-link">问题反馈</button>
+    </div>
   </div>
 
   <!-- ==================== 主应用 ==================== -->
@@ -314,6 +320,48 @@
       <div class="timeline-scroll">
         <div id="timelineList" class="timeline-list"></div>
         <div id="timelineMissed" class="timeline-missed"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 使用说明弹窗 ==================== -->
+  <div id="manualModal" class="modal-overlay hidden">
+    <div class="modal-sheet">
+      <div class="modal-header">
+        <h2 class="modal-title">使用说明</h2>
+        <button id="manualClose" class="btn-icon" aria-label="关闭">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="manual-body">
+        <h3>1. 今日</h3>
+        <p>输入框添加待办，点圆圈打勾完成；📌置顶、⭐高亮、⏰设截止日期；底部"有空可以做"记一些不着急的小事。</p>
+        <h3>2. 顺延</h3>
+        <p>当天没完成的待办，第二天会自动顺延到今天（带"从X月X日开始，已拖N天"标记），历史里会保留每天的记录。</p>
+        <h3>3. 历史</h3>
+        <p>按日期查看过去的待办（含未完成）；点「编辑」可改完成状态、删除、补加记录；「未办池」汇总所有还没完成的事。</p>
+        <h3>4. 日历</h3>
+        <p>看每个月的任务分布和完成情况，点日期可查看/添加当天任务。</p>
+        <h3>5. 打卡</h3>
+        <p>添加习惯或持续任务，每天点「打卡」；点卡片上的 ⏱ 按钮看历史回放、补打卡、加备注、看漏卡。</p>
+        <h3>6. 多设备</h3>
+        <p>用同一个账号登录，手机和电脑数据互通（切换页面/回到前台时自动同步）。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 问题反馈弹窗 ==================== -->
+  <div id="feedbackModal" class="modal-overlay hidden">
+    <div class="modal-sheet">
+      <div class="modal-header">
+        <h2 class="modal-title">问题反馈</h2>
+        <button id="feedbackClose" class="btn-icon" aria-label="关闭">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="manual-body">
+        <p>遇到问题或有改进建议，请到 GitHub 提交 Issue（附上截图和操作步骤更好）。</p>
+        <a class="feedback-link" href="https://github.com/Star-sailing/daily-todos/issues/new" target="_blank" rel="noopener">去 GitHub 提交问题 →</a>
       </div>
     </div>
   </div>

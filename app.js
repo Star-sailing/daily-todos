@@ -160,6 +160,7 @@
           date: t.date,
           createdAt: t.created_at,
           carriedFrom: t.carried_from,
+          completedDate: t.completed_date || null,
           order: t.sort_order,
           pinned: t.pinned || false,
           highlighted: t.highlighted || false,
@@ -193,6 +194,7 @@
       if (todo.ongoingCount !== undefined) payload.ongoing_count = todo.ongoingCount;
       if (todo.lastOngoingDate !== undefined) payload.last_ongoing_date = todo.lastOngoingDate;
       if (todo.lastOngoingNote !== undefined) payload.last_ongoing_note = todo.lastOngoingNote;
+      if (todo.completedDate !== undefined) payload.completed_date = todo.completedDate;
       var result = await supabase.from('todos').insert(payload);
       if (result.error) {
         // If columns don't exist, retry without them (silent — expected until DB migration)
@@ -205,6 +207,7 @@
           delete payload.ongoing_count;
           delete payload.last_ongoing_date;
           delete payload.last_ongoing_note;
+          delete payload.completed_date;
           delete payload.status;
           result = await supabase.from('todos').insert(payload);
           if (result.error) throw result.error;
@@ -238,6 +241,7 @@
       if (changes.ongoingCount !== undefined) payload.ongoing_count = changes.ongoingCount;
       if (changes.lastOngoingDate !== undefined) payload.last_ongoing_date = changes.lastOngoingDate;
       if (changes.lastOngoingNote !== undefined) payload.last_ongoing_note = changes.lastOngoingNote;
+      if (changes.completedDate !== undefined) payload.completed_date = changes.completedDate;
       var result = await supabase.from('todos').update(payload).eq('id', id);
       if (result.error) {
         // If columns don't exist, retry without them (silent — expected until DB migration)
@@ -250,6 +254,7 @@
           delete payload.ongoing_count;
           delete payload.last_ongoing_date;
           delete payload.last_ongoing_note;
+          delete payload.completed_date;
           delete payload.status;
           result = await supabase.from('todos').update(payload).eq('id', id);
           if (result.error) throw result.error;
@@ -290,6 +295,7 @@
         if (t.taskType !== undefined && t.taskType !== 'todo') item.task_type = t.taskType;
         if (t.ongoingCount !== undefined) item.ongoing_count = t.ongoingCount;
         if (t.lastOngoingDate !== undefined) item.last_ongoing_date = t.lastOngoingDate;
+        if (t.completedDate !== undefined) item.completed_date = t.completedDate;
         return item;
       });
       var result = await supabase.from('todos').insert(payload);
@@ -304,6 +310,7 @@
             delete item.task_type;
             delete item.ongoing_count;
             delete item.last_ongoing_date;
+            delete item.completed_date;
             delete item.status;
             return item;
           });
@@ -590,10 +597,33 @@
     });
   }
 
-  // Mark a todo complete and propagate "done" across its whole carry chain:
-  // past/today copies become done, future-dated copies are removed.
+  // Set (or clear) the chain anchor's completion date. The anchor is the row
+  // with carriedFrom === null; its completedDate is the "this task is finished,
+  // stop carrying forward" signal, kept separate from per-day done flags so
+  // history / completion-rate stay accurate per day.
+  async function setChainClosed(todo, completedDate) {
+    var list = state.allTodos;
+    var key = carryChainKey(todo, list);
+    var chain = list.filter(function(t) {
+      return t.taskType === 'todo' && carryChainKey(t, list) === key;
+    });
+    var anchor = null;
+    for (var i = 0; i < chain.length; i++) {
+      if (chain[i].carriedFrom === null) { anchor = chain[i]; break; }
+    }
+    if (anchor) {
+      anchor.completedDate = completedDate;
+      try {
+        await Sync.updateTodo(anchor.id, { completedDate: completedDate });
+      } catch (e) { /* ignore */ }
+    }
+  }
+
+  // Mark a todo complete for the day it was actually done: only the clicked
+  // row becomes done; the anchor is closed (stops future carry-over); future
+  // copies are removed. Past copies stay undone so per-day history is accurate.
   async function completeCarryChain(doneTodo) {
-    var today = getToday();
+    await setChainClosed(doneTodo, doneTodo.date);
     var list = state.allTodos;
     var key = carryChainKey(doneTodo, list);
     var chain = list.filter(function(t) {
@@ -601,13 +631,11 @@
     });
     for (var i = 0; i < chain.length; i++) {
       var t = chain[i];
-      if (t.date > today) {
+      // Remove any copy dated AFTER the actual completion date (e.g. today's
+      // copy when the task was completed on a past date in edit mode).
+      if (t.date > doneTodo.date) {
         try { await Sync.deleteTodo(t.id); } catch (e) { /* ignore */ }
         state.allTodos = state.allTodos.filter(function(x) { return x.id !== t.id; });
-      } else if (!t.done) {
-        t.done = true;
-        t.status = 'done';
-        try { await Sync.updateTodo(t.id, { done: true, status: 'done' }); } catch (e) { /* ignore */ }
       }
     }
   }
@@ -665,6 +693,7 @@
       if (t.taskType === 'ongoing' || t.taskType === 'someday') continue;
       if (t.carriedFrom !== null) continue;
       if (t.done || t.status === 'done') continue;
+      if (t.completedDate) continue; // task finished — stop carrying
       if (t.date >= today) continue;
       originals.push(t);
     }
@@ -712,6 +741,7 @@
         date: today,
         createdAt: new Date().toISOString(),
         carriedFrom: todo.date,
+        completedDate: null,
         order: maxOrder,
         pinned: src.pinned || false,
         highlighted: src.highlighted || false,
@@ -778,6 +808,7 @@
             date: ds,
             createdAt: new Date().toISOString(),
             carriedFrom: (ds === t.carriedFrom) ? null : t.carriedFrom,
+            completedDate: null,
             order: 0,
             pinned: t.pinned || false,
             highlighted: t.highlighted || false,
@@ -1133,7 +1164,12 @@
     var today = getToday();
 
     var items = state.allTodos.filter(function(t) {
-      return t.taskType === 'todo' && !t.done && t.date <= today;
+      if (t.taskType !== 'todo' || t.done || t.date > today) return false;
+      // Exclude finished chains: the anchor's completedDate marks the task as
+      // done (even though its per-day history copies remain "undone").
+      var root = resolveUltimateRootTodo(t, state.allTodos);
+      if (root.carriedFrom === null && root.completedDate) return false;
+      return true;
     });
     // Deduplicate by carry chain: one entry per logical task (the newest row,
     // which is the current "live" copy). History rows stay visible in the
@@ -1259,21 +1295,17 @@
 
   function renderStats() {
     var monthStr = state.statsYear + '-' + String(state.statsMonth + 1).padStart(2, '0');
-    // Count by carry chain, not by row: a task pending across N days should
-    // count once per logical task in the month.
-    var chains = {};
+    // Per-day aggregation: sum of completed "task-days" / sum of all "task-days".
+    // Each row = one task on one date, so a task pending 3 days counts 3 times
+    // (matches the desired (1+2)/(3+4) formula across days).
+    var totalInMonth = 0, doneInMonth = 0;
     for (var i = 0; i < state.allTodos.length; i++) {
       var t = state.allTodos[i];
       if (t.taskType === 'ongoing' || t.taskType === 'someday') continue;
-      if (t.date.substring(0, 7) !== monthStr) continue;
-      var key = carryChainKey(t, state.allTodos);
-      if (!chains[key]) chains[key] = { done: false };
-      if (t.done) chains[key].done = true;
-    }
-    var totalInMonth = 0, doneInMonth = 0;
-    for (var k in chains) {
-      totalInMonth++;
-      if (chains[k].done) doneInMonth++;
+      if (t.date.substring(0, 7) === monthStr) {
+        totalInMonth++;
+        if (t.done) doneInMonth++;
+      }
     }
 
     document.getElementById('statsMonthLabel').textContent = state.statsYear + '年' + (state.statsMonth + 1) + '月';
@@ -1666,6 +1698,7 @@
       date: dateStr,
       createdAt: new Date().toISOString(),
       carriedFrom: null,
+      completedDate: null,
       order: maxOrder + 1,
       pinned: false,
       highlighted: false,
@@ -1708,6 +1741,8 @@
       todo.status = newStatus;
       if (newDone) {
         await completeCarryChain(todo);
+      } else {
+        await setChainClosed(todo, null); // re-open a finished task
       }
       renderCurrentView();
       if (state.modalDate) renderModalList();
@@ -2408,6 +2443,8 @@
       todo.status = newStatus;
       if (newDone) {
         await completeCarryChain(todo);
+      } else {
+        await setChainClosed(todo, null); // re-open a finished task
       }
       renderCurrentView();
       saveLocalCache();
@@ -3069,6 +3106,26 @@
     document.getElementById('switchAuthBtn').textContent = isLoginMode ? '去注册' : '去登录';
     document.getElementById('loginError').textContent = '';
     document.getElementById('registerError').textContent = '';
+  });
+
+  // Manual / feedback modals on the auth page
+  document.getElementById('manualBtn').addEventListener('click', function() {
+    document.getElementById('manualModal').classList.remove('hidden');
+  });
+  document.getElementById('feedbackBtn').addEventListener('click', function() {
+    document.getElementById('feedbackModal').classList.remove('hidden');
+  });
+  document.getElementById('manualClose').addEventListener('click', function() {
+    document.getElementById('manualModal').classList.add('hidden');
+  });
+  document.getElementById('feedbackClose').addEventListener('click', function() {
+    document.getElementById('feedbackModal').classList.add('hidden');
+  });
+  document.getElementById('manualModal').addEventListener('click', function(e) {
+    if (e.target === this) this.classList.add('hidden');
+  });
+  document.getElementById('feedbackModal').addEventListener('click', function(e) {
+    if (e.target === this) this.classList.add('hidden');
   });
 
   // Login form submit
