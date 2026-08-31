@@ -157,22 +157,18 @@ input, button {
   color: var(--text-secondary);
 }
 
-.auth-footer {
+.auth-links {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 8px;
-  margin-top: 18px;
+  justify-content: space-between;
+  margin-top: 14px;
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.85);
 }
 
-.auth-footer .btn-link {
-  color: rgba(255, 255, 255, 0.9);
-}
-
-.auth-footer-sep {
-  opacity: 0.5;
+.auth-links .btn-link {
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
 }
 
 /* ============================
