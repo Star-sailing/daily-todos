@@ -2175,6 +2175,85 @@ input, button {
   padding: 6px 8px;
 }
 
+/* Habit inline calendar */
+.habit-calendar {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.habit-calendar-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.habit-cal-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.habit-cal-nav-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: var(--bg);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.habit-calendar-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  text-align: center;
+  margin-bottom: 2px;
+}
+
+.habit-calendar-weekdays span {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 4px 0;
+}
+
+.habit-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 3px;
+}
+
+.habit-cal-cell {
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  border-radius: 6px;
+  color: var(--text);
+  background: var(--bg);
+}
+
+.habit-cal-cell.other {
+  color: var(--text-muted);
+  background: transparent;
+}
+
+.habit-cal-cell.checked {
+  background: var(--green);
+  color: #fff;
+  font-weight: 600;
+}
+
+.habit-cal-cell.today {
+  box-shadow: inset 0 0 0 2px var(--primary);
+}
+
 /* ============================
    Desktop tweaks
    ============================ */

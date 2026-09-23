@@ -853,6 +853,7 @@
     habitLogs: [],
     habitViewMode: 'active', // 'active' or 'history'
     habitExpanded: {}, // which habit cards are expanded inline
+    habitCalMonth: {}, // per-habit calendar month { habitId: {year, month} }
     habitNoteEditId: null, // habit log id whose note is being edited inline
     currentTab: 'tabToday',
     calendarMonth: new Date().getMonth(),
@@ -1301,6 +1302,56 @@
   }
 
   // Inline per-habit history (expanded inside the card)
+  function habitCalendarHtml(h) {
+    var cm = state.habitCalMonth[h.id] || { year: new Date().getFullYear(), month: new Date().getMonth() };
+    var checked = {};
+    for (var i = 0; i < state.habitLogs.length; i++) {
+      var l = state.habitLogs[i];
+      if (l.habitId === h.id && l.done) checked[l.date] = true;
+    }
+    var today = getToday();
+    var firstDay = new Date(cm.year, cm.month, 1).getDay();
+    var daysInMonth = new Date(cm.year, cm.month + 1, 0).getDate();
+    var prevDays = new Date(cm.year, cm.month, 0).getDate();
+
+    var cells = [];
+    for (var p = firstDay - 1; p >= 0; p--) {
+      var d = prevDays - p;
+      var m = cm.month - 1, y = cm.year;
+      if (m < 0) { m = 11; y--; }
+      cells.push({ day: d, dateStr: y + '-' + String(m + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0'), other: true });
+    }
+    for (var dd = 1; dd <= daysInMonth; dd++) {
+      cells.push({ day: dd, dateStr: cm.year + '-' + String(cm.month + 1).padStart(2, '0') + '-' + String(dd).padStart(2, '0'), other: false });
+    }
+    var remaining = 7 - (cells.length % 7);
+    if (remaining < 7) {
+      for (var n = 1; n <= remaining; n++) {
+        var m2 = cm.month + 1, y2 = cm.year;
+        if (m2 > 11) { m2 = 0; y2++; }
+        cells.push({ day: n, dateStr: y2 + '-' + String(m2 + 1).padStart(2, '0') + '-' + String(n).padStart(2, '0'), other: true });
+      }
+    }
+
+    var grid = cells.map(function(c) {
+      var cls = 'habit-cal-cell';
+      if (c.other) cls += ' other';
+      if (c.dateStr === today) cls += ' today';
+      if (checked[c.dateStr]) cls += ' checked';
+      return '<div class="' + cls + '">' + c.day + '</div>';
+    }).join('');
+
+    return '<div class="habit-calendar">' +
+      '<div class="habit-calendar-nav">' +
+        '<button class="habit-cal-nav-btn" data-action="habit-cal-prev" title="上一月">‹</button>' +
+        '<span class="habit-cal-title">' + cm.year + '年' + (cm.month + 1) + '月</span>' +
+        '<button class="habit-cal-nav-btn" data-action="habit-cal-next" title="下一月">›</button>' +
+      '</div>' +
+      '<div class="habit-calendar-weekdays"><span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span></div>' +
+      '<div class="habit-calendar-grid">' + grid + '</div>' +
+    '</div>';
+  }
+
   function habitHistoryHtml(h) {
     var today = getToday();
     var logs = state.habitLogs.filter(function(l) { return l.habitId === h.id && l.done; });
@@ -1339,34 +1390,15 @@
       }).join('');
     }
 
-    var missedHtml = '';
-    if (h.periodType === 'daily' && h.startDate) {
-      var missed = [];
-      var cur = new Date(h.startDate + 'T00:00:00');
-      var todayD = new Date(today + 'T00:00:00');
-      var guard = 0;
-      while (cur <= todayD && guard < 2000) {
-        var ds = toDateString(cur);
-        if (!logDates[ds]) missed.push(ds);
-        cur.setDate(cur.getDate() + 1);
-        guard++;
-      }
-      var show = missed.slice(-60).reverse();
-      if (show.length > 0) {
-        missedHtml = '<div class="hh-missed">漏卡（' + missed.length + '天）：' +
-          show.map(function(ds) { return formatDateShort(ds); }).join('、') + '</div>';
-      }
-    }
-
     return '<div class="habit-history">' +
       '<div class="habit-history-stats">累计 ' + logs.length + ' 天 · 连续 ' + streak + ' 天 · 本月 ' + thisMonth + ' 天</div>' +
+      habitCalendarHtml(h) +
       '<div class="habit-history-backfill">' +
         '<input type="date" class="hh-date-input" max="' + today + '" data-role="backfill-date">' +
         '<input type="text" class="hh-note-input" placeholder="备注（可选）" data-role="backfill-note">' +
         '<button class="btn btn-add" data-action="habit-backfill">补打卡</button>' +
       '</div>' +
       listHtml +
-      missedHtml +
     '</div>';
   }
 
@@ -2623,6 +2655,17 @@
     } else if (act === 'habit-log-note-cancel') {
       state.habitNoteEditId = null;
       renderHabits();
+    } else if (act === 'habit-cal-prev' || act === 'habit-cal-next') {
+      var cm = state.habitCalMonth[id] || { year: new Date().getFullYear(), month: new Date().getMonth() };
+      if (act === 'habit-cal-prev') {
+        cm.month--;
+        if (cm.month < 0) { cm.month = 11; cm.year--; }
+      } else {
+        cm.month++;
+        if (cm.month > 11) { cm.month = 0; cm.year++; }
+      }
+      state.habitCalMonth[id] = cm;
+      renderHabits();
     }
   });
 
@@ -2985,6 +3028,7 @@
     state.modalDate = null;
     state.deadlinePicker = null;
     state.habitExpanded = {};
+    state.habitCalMonth = {};
     state.habitNoteEditId = null;
     habitReminderShownFor = null;
     loadedOnce = false;
