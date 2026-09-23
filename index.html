@@ -220,11 +220,7 @@
           <button id="habitViewHistory" class="toggle-btn" data-mode="history">打卡记录</button>
         </div>
         <div id="habitsAddBar" class="add-bar">
-          <select id="habitAddType" style="flex-shrink:0;padding:6px 4px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12px;background:var(--surface);color:var(--text);">
-            <option value="habit">习惯</option>
-            <option value="ongoing">持续</option>
-          </select>
-          <input type="text" id="habitInput" class="add-input" placeholder="添加新习惯..." maxlength="100" autocomplete="off">
+          <input type="text" id="habitInput" class="add-input" placeholder="添加新的打卡项..." maxlength="100" autocomplete="off">
           <button id="habitConfigBtn" class="habit-config-btn" title="配置周期和长度">&#9881;</button>
           <button id="habitAddBtn" class="btn btn-add">添加</button>
         </div>
@@ -235,6 +231,7 @@
               <option value="daily">每日</option>
               <option value="weekly">每周</option>
               <option value="monthly">每月</option>
+              <option value="free">自由打卡</option>
             </select>
             <input type="number" id="habitPeriodCount" value="1" min="1" max="30" style="width:48px;">
             <span style="font-size:12px;color:var(--text-muted);">(每N)</span>
@@ -297,28 +294,6 @@
       <div id="modalList" class="todo-list"></div>
       <div id="modalEmpty" class="empty-state" style="padding: 24px 0;">
         <p>这一天还没有待办</p>
-      </div>
-    </div>
-  </div>
-
-  <!-- ==================== 打卡回放弹窗 ==================== -->
-  <div id="timelineModal" class="modal-overlay hidden">
-    <div class="modal-sheet">
-      <div class="modal-header">
-        <h2 id="timelineTitle" class="modal-title"></h2>
-        <button id="timelineClose" class="btn-icon" aria-label="关闭">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-        </button>
-      </div>
-      <div id="timelineStats" class="timeline-stats"></div>
-      <div class="add-bar" style="margin: 0 16px 12px;">
-        <input type="date" id="timelineBackfillDate" class="add-input" style="max-width:150px;flex-shrink:0;">
-        <input type="text" id="timelineBackfillNote" class="add-input" placeholder="备注（可选）" maxlength="100" autocomplete="off">
-        <button id="timelineBackfillBtn" class="btn btn-add" style="flex-shrink:0;">补打卡</button>
-      </div>
-      <div class="timeline-scroll">
-        <div id="timelineList" class="timeline-list"></div>
-        <div id="timelineMissed" class="timeline-missed"></div>
       </div>
     </div>
   </div>

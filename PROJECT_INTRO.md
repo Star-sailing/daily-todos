@@ -20,7 +20,9 @@ daily-todos/
   app.js          # 全部业务逻辑（IIFE）
   manifest.json   # PWA 安装配置
   sw.js           # Service Worker（network-first, v5）
-  migration_ongoing_logs.sql  # 打卡回放功能数据库迁移（SQL Editor 执行）
+  migration_ongoing_logs.sql      # 打卡回放功能数据库迁移（已废弃，见下）
+  migration_completed_date.sql    # 完成率按天统计迁移
+  migration_merge_habits.sql      # 习惯与持续任务合并迁移
 ```
 
 ## Supabase 配置
@@ -28,12 +30,11 @@ daily-todos/
 - **Anon Key:** 见 app.js 第 8 行
 - **数据库表 `todos`：**
   `id(UUID PK)`, `user_id(UUID FK)`, `text`, `done`, `date`, `created_at`, `carried_from`, `sort_order`, `pinned`, `highlighted`, `deadline`, `has_deadline`, `task_type`, `ongoing_count`, `last_ongoing_date`, `last_ongoing_note`, `completed_date`
-- **数据库表 `habits`：**
-  `id(UUID PK)`, `user_id(UUID FK)`, `content`, `period_type`, `period_count`, `total_length`, `start_date`, `created_at`
+- **数据库表 `habits`（统一打卡项）：**
+  `id(UUID PK)`, `user_id(UUID FK)`, `content`, `period_type`(free/daily/weekly/monthly), `period_count`, `total_length`(0=无目标), `start_date`, `pinned`, `sort_order`, `created_at`
 - **数据库表 `habit_logs`：**
   `id(UUID PK)`, `habit_id(UUID FK)`, `user_id(UUID FK)`, `date`, `done`, `note`, `UNIQUE(habit_id, date)`
-- **数据库表 `ongoing_logs`（持续任务打卡明细）：**
-  `id(UUID PK)`, `todo_id(UUID FK)`, `user_id(UUID FK)`, `date`, `note`, `UNIQUE(todo_id, date)`
+- （`ongoing_logs` 表已废弃：持续任务已合并进 habits/habit_logs）
 - 所有表 RLS 已开启，INSERT 触发器自动填充 `user_id = auth.uid()`
 - **认证：** 邮箱+密码，邮件确认已关闭
 - **后台：** https://supabase.com/dashboard/project/inpfdizaklxdlpawzcge
@@ -70,20 +71,18 @@ daily-todos/
 
 ### 打卡板块（第 4 个 Tab）
 - **模式切换：** 当前习惯 / 打卡记录
-- **习惯：** 每日/每周/每月周期，可配间隔、总次数、起始日期
-  - 进度条 + 一键打卡按钮，显示起始年月日
-  - 点击名称编辑名称，✏️ 按钮编辑参数
-  - 已打卡可再点取消
-- **持续任务：** 自由打卡无固定频率，一键 +1 打卡，显示起始年月日
-  - 点击名称编辑名称，已打卡可再点取消
-- **⏱ 历史回放：** 每个习惯/持续任务卡片上的时钟按钮打开回放面板
-  - 统计：累计天数 / 连续天数 / 本月天数 / 起始日期
+- **统一打卡项：** 周期可选（每日/每周/每月/自由打卡），目标次数可选（0=无目标），起始日期
+  - 每条是一个**可折叠条形卡片**：点击卡片展开，内联显示打卡历史
+  - 卡片右上角：📌置顶（重要）· ↑↓上下移排序 · ✎编辑参数 · ✕删除
+  - 一键打卡按钮，已打卡可再点取消
+- **展开后（内联历史）：**
+  - 统计：累计天数 / 连续天数 / 本月天数
   - 时间线：按日期倒序列出每次打卡，✎ 编辑备注，单条可删除
   - 漏卡提示：每日型习惯显示从开始日期起未打卡的日期（最近60天）
   - 补打卡：选择过去日期 + 备注补记
-- **打卡记录：** 按日期卡片展示习惯打卡（含备注）+ 持续任务每日明细（含当天）
+- **打卡记录：** 按日期卡片展示所有打卡项当天的打卡（含备注，含当天）
 - 登录时未打卡习惯弹出 Toast 提醒
-- 达成目标时弹出 🎉 成就提示
+- 达成目标时弹出 🎉 成就提示（自由打卡无目标不弹）
 
 ### 认证与 PWA
 - 记住账号/密码/自动登录
@@ -135,6 +134,13 @@ CREATE TABLE IF NOT EXISTS habit_logs (
 ```sql
 ALTER TABLE todos ADD COLUMN IF NOT EXISTS completed_date DATE;
 ```
+
+### 习惯与持续任务合并迁移
+脚本见 `migration_merge_habits.sql`（先跑 1–4 步，验证数量后再执行第 5 步删除）：
+1. `habits` 增加 `pinned`、`sort_order` 列
+2. 把 `todos.task_type='ongoing'` 迁移成 habits（period_type='free'）
+3. 把 `ongoing_logs` 并入 `habit_logs`
+4. 最后删除 `ongoing` todos 与 `ongoing_logs` 表
 
 ## 开发流程
 ```bash

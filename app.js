@@ -358,6 +358,8 @@
           periodCount: h.period_count,
           totalLength: h.total_length,
           startDate: h.start_date,
+          pinned: h.pinned || false,
+          sortOrder: h.sort_order || 0,
           createdAt: h.created_at
         };
       });
@@ -386,11 +388,27 @@
         period_type: habit.periodType,
         period_count: habit.periodCount,
         total_length: habit.totalLength,
-        start_date: habit.startDate
+        start_date: habit.startDate,
+        pinned: habit.pinned || false,
+        sort_order: habit.sortOrder || 0
       };
       var result = await supabase.from('habits').insert(payload);
       if (result.error) throw result.error;
       return habit;
+    },
+
+    async updateHabit(id, changes) {
+      if (!supabase) return;
+      var payload = {};
+      if (changes.content !== undefined) payload.content = changes.content;
+      if (changes.periodType !== undefined) payload.period_type = changes.periodType;
+      if (changes.periodCount !== undefined) payload.period_count = changes.periodCount;
+      if (changes.totalLength !== undefined) payload.total_length = changes.totalLength;
+      if (changes.startDate !== undefined) payload.start_date = changes.startDate;
+      if (changes.pinned !== undefined) payload.pinned = changes.pinned;
+      if (changes.sortOrder !== undefined) payload.sort_order = changes.sortOrder;
+      var result = await supabase.from('habits').update(payload).eq('id', id);
+      if (result.error) throw result.error;
     },
 
     async deleteHabit(id) {
@@ -432,58 +450,6 @@
     async updateLog(id, note) {
       if (!supabase) return;
       var result = await supabase.from('habit_logs').update({ note: note }).eq('id', id);
-      if (result.error) throw result.error;
-    }
-  };
-
-  /* ==================================================================
-     ONGOING LOG SYNC MODULE (per-day check-in details for ongoing tasks)
-     ================================================================== */
-  var OngoingLogSync = {
-    async fetchLogs() {
-      if (!supabase) return [];
-      var result = await supabase.from('ongoing_logs').select('*').order('date', { ascending: false });
-      if (result.error) throw result.error;
-      return (result.data || []).map(function(l) {
-        return {
-          id: l.id,
-          todoId: l.todo_id,
-          date: l.date,
-          note: l.note || ''
-        };
-      });
-    },
-
-    async addLog(log) {
-      if (!supabase) return null;
-      var payload = {
-        id: log.id,
-        todo_id: log.todoId,
-        date: log.date,
-        note: log.note || ''
-      };
-      var result = await supabase.from('ongoing_logs').insert(payload);
-      if (result.error) {
-        if (result.error.code === '23505') return null; // already logged that day
-        // Table not migrated yet — callers degrade gracefully
-        if (result.error.code === 'PGRST204' || result.error.code === 'PGRST205' || result.error.code === '42P01') {
-          console.warn('ongoing_logs not available yet', result.error.message);
-          throw result.error;
-        }
-        throw result.error;
-      }
-      return log;
-    },
-
-    async deleteLog(id) {
-      if (!supabase) return;
-      var result = await supabase.from('ongoing_logs').delete().eq('id', id);
-      if (result.error) throw result.error;
-    },
-
-    async updateLog(id, note) {
-      if (!supabase) return;
-      var result = await supabase.from('ongoing_logs').update({ note: note }).eq('id', id);
       if (result.error) throw result.error;
     }
   };
@@ -885,8 +851,9 @@
     allTodos: [],
     habits: [],
     habitLogs: [],
-    ongoingLogs: [], // per-day check-in details for ongoing tasks
     habitViewMode: 'active', // 'active' or 'history'
+    habitExpanded: {}, // which habit cards are expanded inline
+    habitNoteEditId: null, // habit log id whose note is being edited inline
     currentTab: 'tabToday',
     calendarMonth: new Date().getMonth(),
     calendarYear: new Date().getFullYear(),
@@ -1060,23 +1027,6 @@
       var total = todos.length;
       var pct = Math.round((doneCount / total) * 100);
 
-      // Ongoing tasks active on this date (prefer per-day detail logs, fall
-      // back to lastOngoingDate for legacy rows that predate the logs table)
-      var ongoingOnDate = [];
-      for (var oi = 0; oi < state.ongoingLogs.length; oi++) {
-        var ol = state.ongoingLogs[oi];
-        if (ol.date !== date) continue;
-        var ot0 = state.allTodos.find(function(t) { return t.id === ol.todoId; });
-        if (ot0) ongoingOnDate.push({ text: ot0.text, note: ol.note || '' });
-      }
-      for (var oi2 = 0; oi2 < state.allTodos.length; oi2++) {
-        var ot2 = state.allTodos[oi2];
-        if (ot2.taskType === 'ongoing' && ot2.lastOngoingDate === date &&
-            !state.ongoingLogs.some(function(l) { return l.todoId === ot2.id && l.date === date; })) {
-          ongoingOnDate.push({ text: ot2.text, note: ot2.lastOngoingNote || '' });
-        }
-      }
-
       // Habit check-ins on this date
       var habitsOnDate = state.habitLogs.filter(function(l) {
         return l.date === date && l.done;
@@ -1086,12 +1036,8 @@
       }).filter(Boolean);
 
       var extraItems = '';
-      if (ongoingOnDate.length > 0 || habitsOnDate.length > 0) {
+      if (habitsOnDate.length > 0) {
         extraItems = '<div class="history-extra">';
-        for (var oi3 = 0; oi3 < ongoingOnDate.length; oi3++) {
-          var od = ongoingOnDate[oi3];
-          extraItems += '<div class="todo-row ongoing-row"><div class="indicator ongoing"></div><span class="txt">' + escapeHtml(od.text) + (od.note ? ' — ' + escapeHtml(od.note) : '') + '</span></div>';
-        }
         for (var hi = 0; hi < habitsOnDate.length; hi++) {
           var hd = habitsOnDate[hi];
           extraItems += '<div class="todo-row habit-row"><div class="indicator habit"></div><span class="txt">打卡: ' + escapeHtml(hd.name) + (hd.note ? ' — ' + escapeHtml(hd.note) : '') + '</span></div>';
@@ -1339,94 +1285,132 @@
     }
   }
 
+  function getSortedHabits() {
+    return state.habits.slice().sort(function(a, b) {
+      var pa = a.pinned ? 1 : 0, pb = b.pinned ? 1 : 0;
+      if (pa !== pb) return pb - pa; // pinned first
+      return (a.sortOrder || 0) - (b.sortOrder || 0);
+    });
+  }
+
+  function habitPeriodLabel(h) {
+    if (h.periodType === 'free') return '自由打卡';
+    if (h.periodType === 'daily') return '每日';
+    if (h.periodType === 'weekly') return '每' + (h.periodCount || 1) + '周';
+    return '每月';
+  }
+
+  // Inline per-habit history (expanded inside the card)
+  function habitHistoryHtml(h) {
+    var today = getToday();
+    var logs = state.habitLogs.filter(function(l) { return l.habitId === h.id && l.done; });
+    logs.sort(function(a, b) { return a.date < b.date ? 1 : -1; });
+    var logDates = {};
+    var thisMonth = 0;
+    var monthStr = today.substring(0, 7);
+    for (var i = 0; i < logs.length; i++) {
+      logDates[logs[i].date] = true;
+      if (logs[i].date.substring(0, 7) === monthStr) thisMonth++;
+    }
+    var streak = 0;
+    var d = new Date(today + 'T00:00:00');
+    if (!logDates[today]) d.setDate(d.getDate() - 1);
+    while (logDates[toDateString(d)]) { streak++; d.setDate(d.getDate() - 1); }
+
+    var listHtml = '';
+    if (logs.length === 0) {
+      listHtml = '<div class="hh-empty">还没有打卡记录</div>';
+    } else {
+      listHtml = logs.map(function(l) {
+        if (state.habitNoteEditId === l.id) {
+          return '<div class="hh-row" data-id="' + l.id + '">' +
+            '<span class="hh-date">' + formatDateShort(l.date) + '</span>' +
+            '<input class="hh-input" data-role="note-input" value="' + escapeHtml(l.note || '') + '" placeholder="备注...">' +
+            '<button class="hh-btn primary" data-action="habit-log-note-save">保存</button>' +
+            '<button class="hh-btn" data-action="habit-log-note-cancel">取消</button>' +
+          '</div>';
+        }
+        return '<div class="hh-row" data-id="' + l.id + '">' +
+          '<span class="hh-date">' + formatDateShort(l.date) + ' ' + getWeekday(l.date) + '</span>' +
+          '<span class="hh-note">' + (l.note ? escapeHtml(l.note) : '') + '</span>' +
+          '<button class="hh-edit" data-action="habit-log-edit-note" title="备注">✎</button>' +
+          '<button class="hh-del" data-action="habit-log-delete" title="删除">✕</button>' +
+        '</div>';
+      }).join('');
+    }
+
+    var missedHtml = '';
+    if (h.periodType === 'daily' && h.startDate) {
+      var missed = [];
+      var cur = new Date(h.startDate + 'T00:00:00');
+      var todayD = new Date(today + 'T00:00:00');
+      var guard = 0;
+      while (cur <= todayD && guard < 2000) {
+        var ds = toDateString(cur);
+        if (!logDates[ds]) missed.push(ds);
+        cur.setDate(cur.getDate() + 1);
+        guard++;
+      }
+      var show = missed.slice(-60).reverse();
+      if (show.length > 0) {
+        missedHtml = '<div class="hh-missed">漏卡（' + missed.length + '天）：' +
+          show.map(function(ds) { return formatDateShort(ds); }).join('、') + '</div>';
+      }
+    }
+
+    return '<div class="habit-history">' +
+      '<div class="habit-history-stats">累计 ' + logs.length + ' 天 · 连续 ' + streak + ' 天 · 本月 ' + thisMonth + ' 天</div>' +
+      '<div class="habit-history-backfill">' +
+        '<input type="date" class="hh-date-input" max="' + today + '" data-role="backfill-date">' +
+        '<input type="text" class="hh-note-input" placeholder="备注（可选）" data-role="backfill-note">' +
+        '<button class="btn btn-add" data-action="habit-backfill">补打卡</button>' +
+      '</div>' +
+      listHtml +
+      missedHtml +
+    '</div>';
+  }
+
   function renderHabitsActive() {
     var listEl = document.getElementById('habitsList');
     var emptyEl = document.getElementById('habitsEmpty');
-    // Collect ongoing tasks (taskType === 'ongoing') to display as free-form cards
-    var ongoingTasks = state.allTodos.filter(function(t) { return t.taskType === 'ongoing'; });
-    var hasContent = state.habits.length > 0 || ongoingTasks.length > 0;
+    var habits = getSortedHabits();
 
-    if (!hasContent) {
+    if (habits.length === 0) {
       listEl.innerHTML = '';
       emptyEl.classList.remove('hidden');
       return;
     }
     emptyEl.classList.add('hidden');
 
-    var today = getToday();
-    var html = '';
-
-    // Regular habits
-    for (var i = 0; i < state.habits.length; i++) {
-      var h = state.habits[i];
+    listEl.innerHTML = habits.map(function(h) {
       var progress = getHabitProgress(h);
       var doneToday = isHabitDoneToday(h.id);
-      var periodLabel = h.periodType === 'daily' ? '每日' :
-                        h.periodType === 'weekly' ? '每' + h.periodCount + '周' :
-                        '每月';
-      html += '<div class="habit-card" data-id="' + h.id + '" data-type="habit">' +
-        '<div class="habit-header">' +
+      var isFree = h.periodType === 'free';
+      var expanded = state.habitExpanded[h.id];
+      var pct = isFree ? Math.min(progress.done * 5, 100) : progress.pct;
+      var meta = isFree
+        ? '自由打卡 · 已做 ' + progress.done + ' 天'
+        : habitPeriodLabel(h) + ' · 目标 ' + h.totalLength + ' 次 · 已做 ' + progress.done;
+
+      return '<div class="habit-card' + (h.pinned ? ' pinned' : '') + '" data-id="' + h.id + '">' +
+        '<div class="habit-bar" data-action="toggle-expand">' +
+          '<button class="habit-pin-btn' + (h.pinned ? ' on' : '') + '" data-action="pin-habit" title="' + (h.pinned ? '取消置顶' : '置顶 / 重要') + '">📌</button>' +
           '<span class="habit-content" data-action="edit-habit-name" title="点击编辑名称">' + escapeHtml(h.content) + '</span>' +
-          '<div class="habit-header-actions">' +
-            '<button class="habit-edit" data-action="view-habit-history" title="历史回放">' +
-              '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>' +
-            '</button>' +
-            '<button class="habit-edit" data-action="edit-habit-params" title="编辑参数">' +
-              '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>' +
-            '</button>' +
-            '<button class="habit-delete" data-action="delete-habit" aria-label="删除">' +
-              '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
-            '</button>' +
+          '<span class="habit-meta-inline">' + meta + '</span>' +
+          '<div class="habit-bar-actions">' +
+            '<button class="habit-move" data-action="move-habit-up" title="上移">↑</button>' +
+            '<button class="habit-move" data-action="move-habit-down" title="下移">↓</button>' +
+            '<button class="habit-move" data-action="edit-habit-params" title="编辑参数">✎</button>' +
+            '<button class="habit-move" data-action="delete-habit" title="删除">✕</button>' +
           '</div>' +
+          '<button class="habit-check-btn' + (doneToday ? ' checked' : '') + '" data-action="check-habit">' + (doneToday ? '✓ 今日' : '打卡') + '</button>' +
         '</div>' +
-        '<div class="habit-meta">' +
-          '<span>' + periodLabel + ' · 目标' + h.totalLength + '次 · 从' + formatDateFull(h.startDate) + '开始</span>' +
-          '<span>已完成 ' + progress.done + ' / ' + progress.total + '</span>' +
-        '</div>' +
-        '<div class="habit-progress-bar">' +
-          '<div class="habit-progress-fill" style="width:' + progress.pct + '%"></div>' +
-        '</div>' +
-        '<button class="habit-check-btn' + (doneToday ? ' checked' : '') + '" data-action="check-habit">' +
-          (doneToday ? '今日已打卡 ✓' : '打卡') +
-        '</button>' +
+        (expanded ? '<div class="habit-expanded">' +
+          '<div class="habit-progress-bar"><div class="habit-progress-fill" style="width:' + pct + '%"></div></div>' +
+          habitHistoryHtml(h) +
+        '</div>' : '') +
       '</div>';
-    }
-
-    // Ongoing tasks as free-form cards
-    for (var j = 0; j < ongoingTasks.length; j++) {
-      var ot = ongoingTasks[j];
-      var otdoneToday = ot.lastOngoingDate === today;
-      html += '<div class="habit-card ongoing-card" data-id="' + ot.id + '" data-type="ongoing">' +
-        '<div class="habit-header">' +
-          '<span class="habit-content ongoing-name" data-action="edit-ongoing-name" title="点击编辑名称">' + escapeHtml(ot.text) + '</span>' +
-          '<div class="habit-header-actions">' +
-            '<button class="habit-edit" data-action="view-ongoing-history" title="历史回放">' +
-              '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>' +
-            '</button>' +
-            '<button class="habit-edit" data-action="edit-ongoing-params" title="编辑">' +
-              '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>' +
-            '</button>' +
-            '<button class="habit-delete" data-action="delete-ongoing" aria-label="删除">' +
-              '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
-            '</button>' +
-          '</div>' +
-        '</div>' +
-        '<div class="habit-meta">' +
-          '<span>自由打卡 · 从' + formatDateFull(ot.date) + '开始</span>' +
-          '<span>已做 ' + (ot.ongoingCount || 0) + ' 天</span>' +
-        '</div>' +
-        '<div class="habit-progress-bar">' +
-          '<div class="habit-progress-fill ongoing-fill" style="width:' + Math.min((ot.ongoingCount || 0) * 5, 100) + '%"></div>' +
-        '</div>' +
-        (ot.lastOngoingDate === today && ot.lastOngoingNote ?
-          '<div class="ongoing-note-display">' + escapeHtml(ot.lastOngoingNote) + '</div>' : '') +
-        '<button class="habit-check-btn ongoing-check-btn' + (otdoneToday ? ' checked' : '') + '" data-action="check-ongoing">' +
-          (otdoneToday ? '今日已打卡 ✓' : '打卡+1') +
-        '</button>' +
-      '</div>';
-    }
-
-    listEl.innerHTML = html;
+    }).join('');
   }
 
   function renderHabitHistory() {
@@ -1434,19 +1418,10 @@
     var emptyEl = document.getElementById('habitsEmpty');
     var today = getToday();
 
-    // Collect all dates that have habit logs or ongoing activity
+    // Collect all dates that have habit check-ins
     var allDates = new Set();
     for (var i = 0; i < state.habitLogs.length; i++) {
       if (state.habitLogs[i].date <= today) allDates.add(state.habitLogs[i].date);
-    }
-    for (var j = 0; j < state.allTodos.length; j++) {
-      var t = state.allTodos[j];
-      if (t.taskType === 'ongoing' && t.lastOngoingDate && t.lastOngoingDate <= today) {
-        allDates.add(t.lastOngoingDate);
-      }
-    }
-    for (var k = 0; k < state.ongoingLogs.length; k++) {
-      if (state.ongoingLogs[k].date <= today) allDates.add(state.ongoingLogs[k].date);
     }
 
     var dates = Array.from(allDates).sort().reverse();
@@ -1466,21 +1441,6 @@
         if (l.date === date && l.done) {
           var h = state.habits.find(function(hb) { return hb.id === l.habitId; });
           if (h) items.push('<div class="todo-row habit-row"><div class="indicator habit"></div><span class="txt">打卡: ' + escapeHtml(h.content) + (l.note ? ' — ' + escapeHtml(l.note) : '') + '</span></div>');
-        }
-      }
-
-      // Ongoing task activity for this date (prefer detail logs, fall back to legacy rows)
-      for (var oi = 0; oi < state.ongoingLogs.length; oi++) {
-        var ol = state.ongoingLogs[oi];
-        if (ol.date !== date) continue;
-        var otl = state.allTodos.find(function(t2) { return t2.id === ol.todoId; });
-        if (otl) items.push('<div class="todo-row ongoing-row"><div class="indicator ongoing"></div><span class="txt">' + escapeHtml(otl.text) + (ol.note ? ' — ' + escapeHtml(ol.note) : '') + '</span></div>');
-      }
-      for (var oi2 = 0; oi2 < state.allTodos.length; oi2++) {
-        var ot2 = state.allTodos[oi2];
-        if (ot2.taskType === 'ongoing' && ot2.lastOngoingDate === date &&
-            !state.ongoingLogs.some(function(l2) { return l2.todoId === ot2.id && l2.date === date; })) {
-          items.push('<div class="todo-row ongoing-row"><div class="indicator ongoing"></div><span class="txt">' + escapeHtml(ot2.text) + (ot2.lastOngoingNote ? ' — ' + escapeHtml(ot2.lastOngoingNote) : '') + '</span></div>');
         }
       }
 
@@ -1773,9 +1733,6 @@
     var removeSet = {};
     for (var r = 0; r < idsToDelete.length; r++) removeSet[idsToDelete[r]] = true;
     state.allTodos = state.allTodos.filter(function(x) { return !removeSet[x.id]; });
-    if (todo.taskType === 'ongoing') {
-      state.ongoingLogs = state.ongoingLogs.filter(function(l) { return l.todoId !== todo.id; });
-    }
   }
 
   // Delete todo
@@ -2054,100 +2011,18 @@
     renderDeadlinePicker();
   }
 
-  // Increment ongoing task
-  // Recompute lastOngoingDate/lastOngoingNote from the per-day detail logs
-  // (the total count is managed separately at each mutation site).
-  async function syncOngoingLastFromLogs(todo) {
-    var logs = state.ongoingLogs.filter(function(l) { return l.todoId === todo.id; });
-    var dates = logs.map(function(l) { return l.date; }).sort();
-    var lastDate = dates.length ? dates[dates.length - 1] : null;
-    var lastNote = '';
-    if (lastDate) {
-      var last = logs.find(function(l) { return l.date === lastDate; });
-      if (last) lastNote = last.note || '';
-    }
-    await Sync.updateTodo(todo.id, {
-      lastOngoingDate: lastDate,
-      lastOngoingNote: lastNote
-    });
-    todo.lastOngoingDate = lastDate;
-    todo.lastOngoingNote = lastNote;
-  }
-
-  async function handleIncrementOngoing(id) {
-    var todo = state.allTodos.find(function(t) { return t.id === id; });
-    if (!todo || todo.taskType !== 'ongoing') return;
-    var today = getToday();
-    // If already done today, undo
-    if (todo.lastOngoingDate === today) {
-      var prevCount = Math.max((todo.ongoingCount || 1) - 1, 0);
-      try {
-        // Remove today's detail log too
-        var todayLog = state.ongoingLogs.find(function(l) { return l.todoId === id && l.date === today; });
-        if (todayLog) {
-          try { await OngoingLogSync.deleteLog(todayLog.id); } catch (e) { console.warn('Delete ongoing log failed', e); }
-          state.ongoingLogs = state.ongoingLogs.filter(function(l) { return l.id !== todayLog.id; });
-        }
-        await Sync.updateTodo(id, {
-          ongoingCount: prevCount,
-          lastOngoingDate: null,
-          lastOngoingNote: ''
-        });
-        todo.ongoingCount = prevCount;
-        todo.lastOngoingDate = null;
-        todo.lastOngoingNote = '';
-        renderCurrentView();
-        if (state.modalDate) renderModalList();
-        renderHabits();
-        saveLocalCache();
-        Toast.show('已取消打卡');
-      } catch (e) {
-        console.warn('Undo ongoing failed', e);
-        Toast.show('取消失败');
-      }
-      return;
-    }
-    // One-tap check-in: no native prompt (unreliable in mobile PWAs).
-    // Notes can be added later in the 回放 panel.
-    var newCount = (todo.ongoingCount || 0) + 1;
-    try {
-      await Sync.updateTodo(id, {
-        ongoingCount: newCount,
-        lastOngoingDate: today,
-        lastOngoingNote: ''
-      });
-      todo.ongoingCount = newCount;
-      todo.lastOngoingDate = today;
-      todo.lastOngoingNote = '';
-      // Per-day detail log — degrade gracefully if the table isn't migrated yet
-      try {
-        var log = { id: generateId(), todoId: id, date: today, note: '' };
-        var saved = await OngoingLogSync.addLog(log);
-        if (saved) state.ongoingLogs.push(saved);
-      } catch (e) {
-        console.warn('Ongoing detail log write failed (table may not be migrated)', e);
-      }
-      renderCurrentView();
-      if (state.modalDate) renderModalList();
-      renderHabits();
-      saveLocalCache();
-      Toast.show('已打卡！累计' + newCount + '天');
-    } catch (e) {
-      console.warn('Increment ongoing failed', e);
-      if (isAuthError(e)) return;
-      Toast.show('打卡失败');
-    }
-  }
-
   // -- Habit handlers --
   async function handleAddHabit(content, periodType, periodCount, totalLength, startDate) {
+    var maxSort = state.habits.reduce(function(m, h) { return Math.max(m, h.sortOrder || 0); }, -1);
     var habit = {
       id: generateId(),
       content: content,
       periodType: periodType || 'daily',
       periodCount: periodCount || 1,
       totalLength: totalLength || 30,
-      startDate: startDate || getToday()
+      startDate: startDate || getToday(),
+      pinned: false,
+      sortOrder: maxSort + 1
     };
     try {
       await HabitSync.addHabit(habit);
@@ -2156,7 +2031,7 @@
     } catch (e) {
       console.warn('Add habit failed', e);
       if (isAuthError(e)) return;
-      Toast.show('创建习惯失败');
+      Toast.show('创建失败');
     }
   }
 
@@ -2235,22 +2110,23 @@
   async function handleEditHabitParams(habitId) {
     var habit = state.habits.find(function(h) { return h.id === habitId; });
     if (!habit) return;
-    var pt = prompt('周期类型 (daily/weekly/monthly)', habit.periodType);
-    if (pt && (pt === 'daily' || pt === 'weekly' || pt === 'monthly')) habit.periodType = pt;
-    var pc = prompt('间隔 (数字)', habit.periodCount);
-    if (pc !== null && parseInt(pc) > 0) habit.periodCount = parseInt(pc);
-    var tl = prompt('总次数', habit.totalLength);
-    if (tl !== null && parseInt(tl) > 0) habit.totalLength = parseInt(tl);
+    var pt = prompt('周期类型 (free/daily/weekly/monthly；free=自由打卡)', habit.periodType);
+    if (pt && (pt === 'free' || pt === 'daily' || pt === 'weekly' || pt === 'monthly')) habit.periodType = pt;
+    if (habit.periodType !== 'free') {
+      var pc = prompt('间隔 (数字)', habit.periodCount);
+      if (pc !== null && parseInt(pc) > 0) habit.periodCount = parseInt(pc);
+      var tl = prompt('目标次数 (0=无目标)', habit.totalLength);
+      if (tl !== null && parseInt(tl) >= 0) habit.totalLength = parseInt(tl);
+    }
     var sd = prompt('起始日期 (YYYY-MM-DD)', habit.startDate);
     if (sd && /^\d{4}-\d{2}-\d{2}$/.test(sd)) habit.startDate = sd;
     try {
-      var result = await supabase.from('habits').update({
-        period_type: habit.periodType,
-        period_count: habit.periodCount,
-        total_length: habit.totalLength,
-        start_date: habit.startDate
-      }).eq('id', habitId);
-      if (result.error) throw result.error;
+      await HabitSync.updateHabit(habitId, {
+        periodType: habit.periodType,
+        periodCount: habit.periodCount,
+        totalLength: habit.totalLength,
+        startDate: habit.startDate
+      });
       renderHabits();
     } catch (e) {
       console.warn('Edit habit params failed', e);
@@ -2258,25 +2134,103 @@
     }
   }
 
-  async function handleEditOngoing(id) {
-    var todo = state.allTodos.find(function(t) { return t.id === id; });
-    if (!todo) return;
-    var newText = prompt('编辑名称', todo.text);
-    if (newText === null || newText.trim() === '') return;
-    newText = newText.trim();
+  async function handleToggleHabitPin(habitId) {
+    var h = state.habits.find(function(x) { return x.id === habitId; });
+    if (!h) return;
+    var newPinned = !h.pinned;
     try {
-      await Sync.updateTodo(id, { text: newText });
-      todo.text = newText;
+      await HabitSync.updateHabit(habitId, { pinned: newPinned });
+      h.pinned = newPinned;
       renderHabits();
     } catch (e) {
-      console.warn('Edit ongoing failed', e);
-      Toast.show('编辑失败');
+      console.warn('Pin habit failed', e);
+      Toast.show('操作失败');
+    }
+  }
+
+  async function handleMoveHabit(habitId, dir) {
+    var habits = getSortedHabits();
+    var idx = -1;
+    for (var i = 0; i < habits.length; i++) {
+      if (habits[i].id === habitId) { idx = i; break; }
+    }
+    if (idx === -1) return;
+    var targetIdx = dir === 'up' ? idx - 1 : idx + 1;
+    if (targetIdx < 0 || targetIdx >= habits.length) return;
+    var a = habits[idx], b = habits[targetIdx];
+    var soa = a.sortOrder || 0, sob = b.sortOrder || 0;
+    try {
+      await HabitSync.updateHabit(a.id, { sortOrder: sob });
+      await HabitSync.updateHabit(b.id, { sortOrder: soa });
+      a.sortOrder = sob;
+      b.sortOrder = soa;
+      renderHabits();
+    } catch (e) {
+      console.warn('Move habit failed', e);
+      Toast.show('操作失败');
+    }
+  }
+
+  async function handleHabitBackfill(habitId) {
+    var card = document.querySelector('.habit-card[data-id="' + habitId + '"]');
+    if (!card) return;
+    var dateInput = card.querySelector('[data-role="backfill-date"]');
+    var noteInput = card.querySelector('[data-role="backfill-note"]');
+    var date = dateInput ? dateInput.value : '';
+    var note = noteInput ? noteInput.value.trim() : '';
+    var today = getToday();
+    if (!date) { Toast.show('请选择日期'); return; }
+    if (date > today) { Toast.show('不能补未来的打卡'); return; }
+    if (state.habitLogs.some(function(l) { return l.habitId === habitId && l.date === date && l.done; })) {
+      Toast.show('该日期已打卡'); return;
+    }
+    var log = { id: generateId(), habitId: habitId, date: date, done: true, note: note };
+    try {
+      var saved = await HabitSync.addHabitLog(log);
+      if (!saved) { Toast.show('该日期已打卡'); return; }
+      state.habitLogs.push(saved);
+      if (noteInput) noteInput.value = '';
+      renderHabits();
+      Toast.show('已补打卡 ' + date);
+    } catch (e) {
+      console.warn('Backfill failed', e);
+      Toast.show('补打卡失败');
+    }
+  }
+
+  async function handleHabitLogDelete(logId) {
+    try {
+      await HabitSync.deleteHabitLog(logId);
+      state.habitLogs = state.habitLogs.filter(function(l) { return l.id !== logId; });
+      renderHabits();
+      Toast.show('已删除');
+    } catch (e) {
+      console.warn('Delete habit log failed', e);
+      Toast.show('删除失败');
+    }
+  }
+
+  async function handleHabitLogNoteSave() {
+    if (!state.habitNoteEditId) return;
+    var input = document.querySelector('.hh-input[data-role="note-input"]');
+    var note = input ? input.value.trim() : '';
+    var logId = state.habitNoteEditId;
+    try {
+      await HabitSync.updateLog(logId, note);
+      var hl = state.habitLogs.find(function(l) { return l.id === logId; });
+      if (hl) hl.note = note;
+      state.habitNoteEditId = null;
+      renderHabits();
+    } catch (e) {
+      console.warn('Note save failed', e);
+      Toast.show('保存失败');
     }
   }
 
   function checkHabitAchievement(habitId) {
     var habit = state.habits.find(function(h) { return h.id === habitId; });
     if (!habit) return;
+    if (!habit.totalLength || habit.totalLength <= 0) return; // free habit — no goal
     var progress = getHabitProgress(habit);
     if (progress.done >= progress.total) {
       Toast.show('🎉 恭喜！"' + habit.content + '" 已完成全部目标！', 4000);
@@ -2321,7 +2275,6 @@
     else if (action.dataset.action === 'highlight') handleHighlight(id);
     else if (action.dataset.action === 'deadline') handleDeadlineClick(id);
     else if (action.dataset.action === 'cancel-deadline') handleSetDeadline(id, null);
-    else if (action.dataset.action === 'increment') handleIncrementOngoing(id);
   });
 
   // Add todo button
@@ -2637,31 +2590,39 @@
     var card = e.target.closest('.habit-card');
     if (!card) return;
     var id = card.dataset.id;
-    var type = card.dataset.type;
     var action = e.target.closest('[data-action]');
     if (!action) return;
-    if (action.dataset.action === 'check-habit' && type === 'habit') handleCheckHabit(id);
-    else if (action.dataset.action === 'delete-habit' && type === 'habit') handleDeleteHabit(id);
-    else if (action.dataset.action === 'edit-habit-name' && type === 'habit') handleEditHabitName(id);
-    else if (action.dataset.action === 'edit-habit-params' && type === 'habit') handleEditHabitParams(id);
-    else if (action.dataset.action === 'view-habit-history' && type === 'habit') openTimeline('habit', id);
-    else if (action.dataset.action === 'check-ongoing' && type === 'ongoing') handleIncrementOngoing(id);
-    else if (action.dataset.action === 'edit-ongoing-name' && type === 'ongoing') handleEditOngoing(id);
-    else if (action.dataset.action === 'edit-ongoing-params' && type === 'ongoing') handleEditOngoing(id);
-    else if (action.dataset.action === 'view-ongoing-history' && type === 'ongoing') openTimeline('ongoing', id);
-    else if (action.dataset.action === 'delete-ongoing' && type === 'ongoing') {
-      var idx = -1;
-      for (var i = 0; i < state.allTodos.length; i++) {
-        if (state.allTodos[i].id === id) { idx = i; break; }
-      }
-      if (idx === -1) return;
-      try {
-        await Sync.deleteTodo(id);
-        state.allTodos.splice(idx, 1);
-        state.ongoingLogs = state.ongoingLogs.filter(function(l) { return l.todoId !== id; });
-        renderHabits();
-        Toast.show('已删除');
-      } catch (ex) { console.warn('Delete ongoing failed', ex); Toast.show('删除失败'); }
+    var act = action.dataset.action;
+    if (act === 'toggle-expand') {
+      state.habitExpanded[id] = !state.habitExpanded[id];
+      renderHabits();
+    } else if (act === 'check-habit') {
+      handleCheckHabit(id);
+    } else if (act === 'pin-habit') {
+      handleToggleHabitPin(id);
+    } else if (act === 'move-habit-up') {
+      handleMoveHabit(id, 'up');
+    } else if (act === 'move-habit-down') {
+      handleMoveHabit(id, 'down');
+    } else if (act === 'edit-habit-name') {
+      handleEditHabitName(id);
+    } else if (act === 'edit-habit-params') {
+      handleEditHabitParams(id);
+    } else if (act === 'delete-habit') {
+      handleDeleteHabit(id);
+    } else if (act === 'habit-backfill') {
+      handleHabitBackfill(id);
+    } else if (act === 'habit-log-delete') {
+      var row = action.closest('.hh-row');
+      if (row) handleHabitLogDelete(row.dataset.id);
+    } else if (act === 'habit-log-edit-note') {
+      var row2 = action.closest('.hh-row');
+      if (row2) { state.habitNoteEditId = row2.dataset.id; renderHabits(); }
+    } else if (act === 'habit-log-note-save') {
+      handleHabitLogNoteSave();
+    } else if (act === 'habit-log-note-cancel') {
+      state.habitNoteEditId = null;
+      renderHabits();
     }
   });
 
@@ -2913,30 +2874,6 @@
     }
   }
 
-  // Timeline modal events
-  document.getElementById('timelineModal').addEventListener('click', function(e) {
-    if (e.target === this) {
-      closeTimeline();
-      return;
-    }
-    var action = e.target.closest('[data-action]');
-    if (!action || !timelineTarget) return;
-    if (action.dataset.action === 'timeline-delete') {
-      var item = action.closest('.timeline-item');
-      if (item) handleTimelineDelete(item.dataset.id);
-    } else if (action.dataset.action === 'timeline-edit-note') {
-      var item2 = action.closest('.timeline-item');
-      if (item2) { timelineNoteEditId = item2.dataset.id; renderTimeline(); }
-    } else if (action.dataset.action === 'timeline-note-save') {
-      handleTimelineNoteSave();
-    } else if (action.dataset.action === 'timeline-note-cancel') {
-      timelineNoteEditId = null;
-      renderTimeline();
-    }
-  });
-  document.getElementById('timelineClose').addEventListener('click', closeTimeline);
-  document.getElementById('timelineBackfillBtn').addEventListener('click', handleTimelineBackfill);
-
   // Habit view toggle
   document.getElementById('habitViewActive').addEventListener('click', function() {
     state.habitViewMode = 'active';
@@ -2945,14 +2882,6 @@
   document.getElementById('habitViewHistory').addEventListener('click', function() {
     state.habitViewMode = 'history';
     renderHabits();
-  });
-
-  // Habit add type toggle: hide config + change placeholder for ongoing mode
-  document.getElementById('habitAddType').addEventListener('change', function() {
-    var isOngoing = this.value === 'ongoing';
-    document.getElementById('habitConfigBtn').classList.toggle('hidden', isOngoing);
-    document.getElementById('habitConfigPanel').classList.add('hidden');
-    document.getElementById('habitInput').placeholder = isOngoing ? '添加持续任务...' : '添加新习惯...';
   });
 
   // Habit config toggle
@@ -2964,38 +2893,18 @@
   // Init habit start date
   document.getElementById('habitStartDate').value = getToday();
 
-  // Habit add — read type + config values
+  // Habit add — read config values
   document.getElementById('habitAddBtn').addEventListener('click', function() {
     var input = document.getElementById('habitInput');
     var text = input.value.trim();
     if (!text) return;
     input.value = '';
-    var addType = document.getElementById('habitAddType').value;
-    if (addType === 'ongoing') {
-      // Create ongoing task
-      var dateStr = getToday();
-      var all = state.allTodos.filter(function(t) { return t.date === dateStr && t.taskType !== 'ongoing' && t.taskType !== 'someday'; });
-      var maxOrder = all.reduce(function(m, t) { return Math.max(m, t.order); }, -1);
-      var todo = {
-        id: generateId(), text: text, done: false, status: 'active', date: dateStr,
-        createdAt: new Date().toISOString(), carriedFrom: null, order: maxOrder + 1,
-        pinned: false, highlighted: false, deadline: null, hasDeadline: false,
-        taskType: 'ongoing', ongoingCount: 0, lastOngoingDate: null, lastOngoingNote: ''
-      };
-      Sync.addTodo(todo).then(function() {
-        state.allTodos.push(todo);
-        renderHabits();
-        saveLocalCache();
-      }).catch(function(e) {
-        if (!isAuthError(e)) Toast.show('添加失败');
-      });
-    } else {
-      var periodType = document.getElementById('habitPeriodType').value;
-      var periodCount = parseInt(document.getElementById('habitPeriodCount').value) || 1;
-      var totalLength = parseInt(document.getElementById('habitTotalLength').value) || 30;
-      var startDate = document.getElementById('habitStartDate').value || getToday();
-      handleAddHabit(text, periodType, periodCount, totalLength, startDate);
-    }
+    var periodType = document.getElementById('habitPeriodType').value;
+    var periodCount = parseInt(document.getElementById('habitPeriodCount').value) || 1;
+    var totalLength = parseInt(document.getElementById('habitTotalLength').value) || 30;
+    var startDate = document.getElementById('habitStartDate').value || getToday();
+    if (periodType === 'free') totalLength = 0;
+    handleAddHabit(text, periodType, periodCount, totalLength, startDate);
   });
 
   document.getElementById('habitInput').addEventListener('keydown', function(e) {
@@ -3055,7 +2964,6 @@
     else if (action.dataset.action === 'highlight') handleHighlight(id);
     else if (action.dataset.action === 'deadline') handleDeadlineClick(id);
     else if (action.dataset.action === 'cancel-deadline') handleSetDeadline(id, null);
-    else if (action.dataset.action === 'increment') handleIncrementOngoing(id);
   });
 
   // Logout
@@ -3064,7 +2972,6 @@
     state.allTodos = [];
     state.habits = [];
     state.habitLogs = [];
-    state.ongoingLogs = [];
     state.historyExpanded = {};
     state.historyPickedDate = null;
     state.historyEditMode = false;
@@ -3077,13 +2984,12 @@
     state.statsYear = new Date().getFullYear();
     state.modalDate = null;
     state.deadlinePicker = null;
-    timelineTarget = null;
-    timelineNoteEditId = null;
+    state.habitExpanded = {};
+    state.habitNoteEditId = null;
     habitReminderShownFor = null;
     loadedOnce = false;
     closeModal();
     closeDeadlinePicker();
-    closeTimeline();
   }
 
   document.getElementById('logoutBtn').addEventListener('click', async function() {
@@ -3228,12 +3134,10 @@
       try {
         state.habits = await HabitSync.fetchHabits();
         state.habitLogs = await HabitSync.fetchHabitLogs();
-        state.ongoingLogs = await OngoingLogSync.fetchLogs();
       } catch (e) {
         console.warn('Fetch habits failed', e);
         state.habits = [];
         state.habitLogs = [];
-        state.ongoingLogs = [];
       }
 
       // Load lastActiveDate from localStorage (persisted across sessions)
@@ -3307,7 +3211,6 @@
       try {
         state.habits = await HabitSync.fetchHabits();
         state.habitLogs = await HabitSync.fetchHabitLogs();
-        state.ongoingLogs = await OngoingLogSync.fetchLogs();
       } catch (e) { /* keep the previous habit data */ }
       localCache.todos = state.allTodos;
       saveLocalCache();
