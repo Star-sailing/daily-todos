@@ -1242,16 +1242,36 @@
 
   function renderStats() {
     var monthStr = state.statsYear + '-' + String(state.statsMonth + 1).padStart(2, '0');
-    // Per-day aggregation: sum of completed "task-days" / sum of all "task-days".
-    // Each row = one task on one date, so a task pending 3 days counts 3 times
-    // (matches the desired (1+2)/(3+4) formula across days).
+    // Hybrid completion rate:
+    // - Non-DDL tasks: per-day aggregation (each row = one task on one date).
+    // - DDL tasks: counted ONCE per logical task (by carry chain), done if it
+    //   was eventually completed — NOT spread across every day it was pending.
     var totalInMonth = 0, doneInMonth = 0;
+    var ddlChains = {};
+
     for (var i = 0; i < state.allTodos.length; i++) {
       var t = state.allTodos[i];
       if (t.taskType === 'ongoing' || t.taskType === 'someday') continue;
-      if (t.date.substring(0, 7) === monthStr) {
+
+      if (t.hasDeadline) {
+        var key = carryChainKey(t, state.allTodos);
+        if (!ddlChains[key]) ddlChains[key] = { done: false, rootDate: null };
+        if (t.done) ddlChains[key].done = true;
+        if (t.carriedFrom === null) ddlChains[key].rootDate = t.date;
+      } else {
+        if (t.date.substring(0, 7) === monthStr) {
+          totalInMonth++;
+          if (t.done) doneInMonth++;
+        }
+      }
+    }
+
+    // DDL tasks belong to their creation month (root/anchor date)
+    for (var k in ddlChains) {
+      var c = ddlChains[k];
+      if (c.rootDate && c.rootDate.substring(0, 7) === monthStr) {
         totalInMonth++;
-        if (t.done) doneInMonth++;
+        if (c.done) doneInMonth++;
       }
     }
 
