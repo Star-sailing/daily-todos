@@ -1242,10 +1242,12 @@
 
   function renderStats() {
     var monthStr = state.statsYear + '-' + String(state.statsMonth + 1).padStart(2, '0');
+    var today = getToday();
     // Hybrid completion rate:
     // - Non-DDL tasks: per-day aggregation (each row = one task on one date).
     // - DDL tasks: counted ONCE per logical task (by carry chain), done if it
     //   was eventually completed — NOT spread across every day it was pending.
+    // - Future-dated tasks are excluded until their date actually arrives.
     var totalInMonth = 0, doneInMonth = 0;
     var ddlChains = {};
 
@@ -1259,7 +1261,7 @@
         if (t.done) ddlChains[key].done = true;
         if (t.carriedFrom === null) ddlChains[key].rootDate = t.date;
       } else {
-        if (t.date.substring(0, 7) === monthStr) {
+        if (t.date <= today && t.date.substring(0, 7) === monthStr) {
           totalInMonth++;
           if (t.done) doneInMonth++;
         }
@@ -1269,7 +1271,7 @@
     // DDL tasks belong to their creation month (root/anchor date)
     for (var k in ddlChains) {
       var c = ddlChains[k];
-      if (c.rootDate && c.rootDate.substring(0, 7) === monthStr) {
+      if (c.rootDate && c.rootDate <= today && c.rootDate.substring(0, 7) === monthStr) {
         totalInMonth++;
         if (c.done) doneInMonth++;
       }
