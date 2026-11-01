@@ -824,24 +824,21 @@
 
   async function checkDeadlineExpiry(todos) {
     var today = getToday();
-    var expiredTodos = [];
+    var overdue = [];
     for (var i = 0; i < todos.length; i++) {
       var t = todos[i];
-      if (t.status === 'active' && t.hasDeadline && t.deadline && t.deadline < today) {
-        // Past DDL and still active — mark as expired for display only.
-        // Never auto-complete: expiry is a reminder, only a real check counts.
-        expiredTodos.push(t);
-        t.status = 'expired';
-        try {
-          await Sync.updateTodo(t.id, { status: 'expired' });
-        } catch (e) { /* non-critical — try again next time */ }
+      if (t.status === 'active' && t.hasDeadline && t.deadline && t.deadline < today && !t.done) {
+        overdue.push(t);
       }
     }
-    if (expiredTodos.length > 0) {
-      var names = expiredTodos.map(function(et) { return '「' + et.text + '」'; }).join('、');
+    if (overdue.length > 0) {
+      var names = overdue.map(function(et) { return '「' + et.text + '」'; }).join('、');
       Toast.show('以下待办已过截止日期，记得完成: ' + names, 5000);
     }
-    return expiredTodos.length > 0;
+    // No persistent "expired" status: overdue is shown live in the Today view
+    // (已逾期N天 badge, computed from deadline vs today), so completed tasks
+    // don't leave a stale "已过期" marker in history.
+    return false;
   }
 
   /* ==================================================================
@@ -1062,37 +1059,27 @@
         '<div class="history-card-body">' +
           todos.map(function(t) {
             if (isEditing) {
-              var isExpiredE = t.status === 'expired';
               var ddlInfoE = '';
               if (t.hasDeadline && t.deadline) {
                 ddlInfoE = ' <span class="todo-badge deadline-countdown" style="font-size:10px;padding:1px 4px;margin-left:4px;cursor:pointer;" data-action="history-deadline" data-id="' + t.id + '" title="点击修改DDL">DDL: ' + formatDateShort(t.deadline) + '</span>';
               }
-              var expiredTagE = '';
-              if (isExpiredE) {
-                expiredTagE = ' <span class="todo-badge deadline-overdue" style="font-size:10px;padding:1px 4px;margin-left:4px;">已过期</span>';
-              }
               return '<div class="todo-row" data-id="' + t.id + '">' +
                 '<button class="history-toggle-btn" data-action="history-toggle" title="切换完成状态">' +
-                  '<div class="indicator ' + (isExpiredE ? 'expired' : (t.done ? 'done' : 'undone')) + '"></div>' +
+                  '<div class="indicator ' + (t.done ? 'done' : 'undone') + '"></div>' +
                 '</button>' +
-                '<span class="txt' + (t.done ? ' was-done' : '') + '">' + escapeHtml(t.text) + ddlInfoE + expiredTagE + '</span>' +
+                '<span class="txt' + (t.done ? ' was-done' : '') + '">' + escapeHtml(t.text) + ddlInfoE + '</span>' +
                 '<button class="history-delete-btn" data-action="history-delete" title="删除">' +
                   '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
                 '</button>' +
                 '</div>';
             }
-            var isExpired = t.status === 'expired';
             var ddlInfo = '';
             if (t.hasDeadline && t.deadline) {
               ddlInfo = ' <span class="todo-badge deadline-countdown" style="font-size:10px;padding:1px 4px;margin-left:4px;">DDL: ' + formatDateShort(t.deadline) + '</span>';
             }
-            var expiredTag = '';
-            if (isExpired) {
-              expiredTag = ' <span class="todo-badge deadline-overdue" style="font-size:10px;padding:1px 4px;margin-left:4px;">已过期</span>';
-            }
             return '<div class="todo-row">' +
-              '<div class="indicator ' + (isExpired ? 'expired' : (t.done ? 'done' : 'undone')) + '"></div>' +
-              '<span class="txt' + (t.done ? ' was-done' : '') + '">' + escapeHtml(t.text) + ddlInfo + expiredTag + '</span>' +
+              '<div class="indicator ' + (t.done ? 'done' : 'undone') + '"></div>' +
+              '<span class="txt' + (t.done ? ' was-done' : '') + '">' + escapeHtml(t.text) + ddlInfo + '</span>' +
               '</div>';
           }).join('') +
           // Add-to-date button in edit mode
