@@ -822,22 +822,10 @@
     return updated;
   }
 
-  async function checkDeadlineExpiry(todos) {
-    var today = getToday();
-    var overdue = [];
-    for (var i = 0; i < todos.length; i++) {
-      var t = todos[i];
-      if (t.status === 'active' && t.hasDeadline && t.deadline && t.deadline < today && !t.done) {
-        overdue.push(t);
-      }
-    }
-    if (overdue.length > 0) {
-      var names = overdue.map(function(et) { return '「' + et.text + '」'; }).join('、');
-      Toast.show('以下待办已过截止日期，记得完成: ' + names, 5000);
-    }
-    // No persistent "expired" status: overdue is shown live in the Today view
-    // (已逾期N天 badge, computed from deadline vs today), so completed tasks
-    // don't leave a stale "已过期" marker in history.
+  async function checkDeadlineExpiry() {
+    // Overdue tasks are shown live via the "已逾期N天" badge in the Today view
+    // (computed from deadline vs today). No toast here — it would fire on every
+    // tab switch / window focus and also list completed tasks' history copies.
     return false;
   }
 
@@ -913,13 +901,17 @@
       // Deadline badge
       var deadlineBadge = '';
       if (t.hasDeadline && t.deadline) {
-        var remaining = daysBetween(getToday(), t.deadline);
-        if (remaining < 0) {
-          deadlineBadge = '<span class="todo-badge deadline-overdue" data-action="cancel-deadline" title="点击取消">已逾期' + Math.abs(remaining) + '天</span>';
-        } else if (remaining === 0) {
-          deadlineBadge = '<span class="todo-badge deadline-today" data-action="cancel-deadline" title="点击取消">今天截止</span>';
+        if (t.done) {
+          deadlineBadge = '<span class="todo-badge">DDL: ' + formatDateShort(t.deadline) + '</span>';
         } else {
-          deadlineBadge = '<span class="todo-badge deadline-countdown" data-action="cancel-deadline" title="点击取消">剩余' + remaining + '天</span>';
+          var remaining = daysBetween(getToday(), t.deadline);
+          if (remaining < 0) {
+            deadlineBadge = '<span class="todo-badge deadline-overdue" data-action="cancel-deadline" title="点击取消">已逾期' + Math.abs(remaining) + '天</span>';
+          } else if (remaining === 0) {
+            deadlineBadge = '<span class="todo-badge deadline-today" data-action="cancel-deadline" title="点击取消">今天截止</span>';
+          } else {
+            deadlineBadge = '<span class="todo-badge deadline-countdown" data-action="cancel-deadline" title="点击取消">剩余' + remaining + '天</span>';
+          }
         }
       }
       var isOngoing = t.taskType === 'ongoing';
@@ -1578,13 +1570,17 @@
       // Deadline badge
       var deadlineBadge = '';
       if (t.hasDeadline && t.deadline) {
-        var remaining = daysBetween(getToday(), t.deadline);
-        if (remaining < 0) {
-          deadlineBadge = '<span class="todo-badge deadline-overdue" data-action="cancel-deadline" title="点击取消">已逾期' + Math.abs(remaining) + '天</span>';
-        } else if (remaining === 0) {
-          deadlineBadge = '<span class="todo-badge deadline-today" data-action="cancel-deadline" title="点击取消">今天截止</span>';
+        if (t.done) {
+          deadlineBadge = '<span class="todo-badge">DDL: ' + formatDateShort(t.deadline) + '</span>';
         } else {
-          deadlineBadge = '<span class="todo-badge deadline-countdown" data-action="cancel-deadline" title="点击取消">剩余' + remaining + '天</span>';
+          var remaining = daysBetween(getToday(), t.deadline);
+          if (remaining < 0) {
+            deadlineBadge = '<span class="todo-badge deadline-overdue" data-action="cancel-deadline" title="点击取消">已逾期' + Math.abs(remaining) + '天</span>';
+          } else if (remaining === 0) {
+            deadlineBadge = '<span class="todo-badge deadline-today" data-action="cancel-deadline" title="点击取消">今天截止</span>';
+          } else {
+            deadlineBadge = '<span class="todo-badge deadline-countdown" data-action="cancel-deadline" title="点击取消">剩余' + remaining + '天</span>';
+          }
         }
       }
       var badgesHtml = '';
