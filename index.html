@@ -142,14 +142,14 @@
           <input type="text" id="historyAddInput" class="add-input" placeholder="添加到此日期..." maxlength="200" autocomplete="off">
           <button id="historyAddBtn" class="btn btn-add">添加</button>
         </div>
-        <!-- 未办池 -->
+        <!-- 未来待办池 -->
         <div class="backlog-section">
           <div class="backlog-header">
-            <span class="backlog-title">未办池</span>
+            <span class="backlog-title">未来待办</span>
             <span id="backlogCount" class="backlog-count">0</span>
           </div>
           <div id="backlogList" class="backlog-list"></div>
-          <div id="backlogEmpty" class="backlog-empty">没有未完成的待办 🎉</div>
+          <div id="backlogEmpty" class="backlog-empty">没有未来的待办或计划</div>
         </div>
         <div id="historyList" class="history-list"></div>
         <div id="historyEmpty" class="empty-state">
@@ -313,7 +313,7 @@
         <h3>2. 顺延</h3>
         <p>当天没完成的待办，第二天会自动顺延到今天（带"从X月X日开始，已拖N天"标记），历史里会保留每天的记录。</p>
         <h3>3. 历史</h3>
-        <p>按日期查看过去的待办（含未完成）；点「编辑」可改完成状态、删除、补加记录；「未办池」汇总所有还没完成的事。</p>
+        <p>按日期查看过去的待办（含未完成）；点「编辑」可改完成状态、删除、补加记录；「未来待办」汇总有 DDL 的任务和提前安排的计划。</p>
         <h3>4. 日历</h3>
         <p>看每个月的任务分布和完成情况，点日期可查看/添加当天任务。</p>
         <h3>5. 打卡</h3>

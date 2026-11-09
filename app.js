@@ -919,7 +919,7 @@
       var badgesHtml = '';
       if (!isOngoing) {
         badgesHtml += deadlineBadge;
-        if (t.carriedFrom) badgesHtml += '<span class="todo-badge">从' + formatDateShort(t.carriedFrom) + '开始，已拖' + daysBetween(t.carriedFrom, getToday()) + '天</span>';
+        if (t.carriedFrom && !t.hasDeadline) badgesHtml += '<span class="todo-badge">从' + formatDateShort(t.carriedFrom) + '开始，已拖' + daysBetween(t.carriedFrom, getToday()) + '天</span>';
       }
       if (isOngoing) {
         return '<div class="' + classes + '" data-id="' + t.id + '">' +
@@ -1082,38 +1082,32 @@
     }).join('');
   }
 
-  // -- Unfinished pool (未办池) --
+  // -- Future pool (未来待办) --
   function renderBacklog() {
     var listEl = document.getElementById('backlogList');
     var emptyEl = document.getElementById('backlogEmpty');
     var countEl = document.getElementById('backlogCount');
     var today = getToday();
 
-    var items = state.allTodos.filter(function(t) {
-      if (t.taskType !== 'todo' || t.done || t.date > today) return false;
-      // Exclude finished chains: the anchor's completedDate marks the task as
-      // done (even though its per-day history copies remain "undone").
-      var root = resolveUltimateRootTodo(t, state.allTodos);
-      if (root.carriedFrom === null && root.completedDate) return false;
-      return true;
-    });
-    // Deduplicate by carry chain: one entry per logical task (the newest row,
-    // which is the current "live" copy). History rows stay visible in the
-    // history view, not here.
-    items.sort(function(a, b) { return a.date < b.date ? 1 : -1; });
     var seen = {};
-    items = items.filter(function(t) {
-      var key = carryChainKey(t, state.allTodos);
-      if (seen[key]) return false;
-      seen[key] = true;
-      return true;
-    });
-    items.sort(function(a, b) {
-      var ra = a.carriedFrom || a.date;
-      var rb = b.carriedFrom || b.date;
-      if (ra !== rb) return ra < rb ? -1 : 1;
-      return a.date < b.date ? -1 : 1;
-    });
+    var items = [];
+    for (var i = 0; i < state.allTodos.length; i++) {
+      var t = state.allTodos[i];
+      if (t.taskType !== 'todo' || t.done) continue;
+
+      if (t.hasDeadline && t.deadline) {
+        // DDL task: one entry per chain, show the deadline date
+        var key = carryChainKey(t, state.allTodos);
+        if (seen[key]) continue;
+        seen[key] = true;
+        items.push({ text: t.text, date: t.deadline, kind: 'ddl' });
+      } else if (t.date > today) {
+        // Future-planned task (no DDL): show the planned date
+        items.push({ text: t.text, date: t.date, kind: 'future' });
+      }
+    }
+
+    items.sort(function(a, b) { return a.date < b.date ? -1 : 1; });
 
     if (countEl) countEl.textContent = items.length;
 
@@ -1124,24 +1118,14 @@
     }
     emptyEl.classList.add('hidden');
 
-    listEl.innerHTML = items.map(function(t) {
-      var origin = t.carriedFrom || t.date;
-      var age = daysBetween(origin, today);
-      var ageHtml = '';
-      if (age > 0) {
-        ageHtml = '<span class="backlog-age">从' + formatDateShort(origin) + '开始，已拖' + age + '天</span>';
-      } else if (t.date < today) {
-        ageHtml = '<span class="backlog-age">' + formatDateShort(t.date) + ' 未完成</span>';
-      }
-      return '<div class="backlog-item" data-id="' + t.id + '">' +
-        '<button class="backlog-done-btn" data-action="backlog-done" title="标记完成">' +
-          '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' +
-        '</button>' +
-        '<span class="backlog-text">' + escapeHtml(t.text) + '</span>' +
-        ageHtml +
-        '<button class="backlog-delete-btn" data-action="backlog-delete" title="删除">' +
-          '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
-        '</button>' +
+    listEl.innerHTML = items.map(function(it) {
+      var overdue = it.kind === 'ddl' && it.date < today;
+      var badge = it.kind === 'ddl'
+        ? '<span class="backlog-age' + (overdue ? ' overdue' : '') + '">DDL ' + formatDateShort(it.date) + '</span>'
+        : '<span class="backlog-age">' + formatDateShort(it.date) + '</span>';
+      return '<div class="backlog-item">' +
+        '<span class="backlog-text">' + escapeHtml(it.text) + '</span>' +
+        badge +
       '</div>';
     }).join('');
   }
@@ -1586,7 +1570,7 @@
       var badgesHtml = '';
       if (!isOngoing) {
         badgesHtml += deadlineBadge;
-        if (t.carriedFrom) badgesHtml += '<span class="todo-badge">从' + formatDateShort(t.carriedFrom) + '开始，已拖' + daysBetween(t.carriedFrom, getToday()) + '天</span>';
+        if (t.carriedFrom && !t.hasDeadline) badgesHtml += '<span class="todo-badge">从' + formatDateShort(t.carriedFrom) + '开始，已拖' + daysBetween(t.carriedFrom, getToday()) + '天</span>';
       }
       var html = '<div class="' + cls + '" data-id="' + t.id + '">';
       if (isOngoing) {
