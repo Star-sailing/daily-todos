@@ -900,10 +900,10 @@
       if (t.hasDeadline) classes += ' has-deadline';
       // Deadline badge
       var deadlineBadge = '';
+      var deadlineDateBadge = '';
       if (t.hasDeadline && t.deadline) {
-        if (t.done) {
-          deadlineBadge = '<span class="todo-badge">DDL: ' + formatDateShort(t.deadline) + '</span>';
-        } else {
+        deadlineDateBadge = '<span class="todo-badge">截止 ' + formatDateShort(t.deadline) + '</span>';
+        if (!t.done) {
           var remaining = daysBetween(getToday(), t.deadline);
           if (remaining < 0) {
             deadlineBadge = '<span class="todo-badge deadline-overdue" data-action="cancel-deadline" title="点击取消">已逾期' + Math.abs(remaining) + '天</span>';
@@ -919,6 +919,7 @@
       var badgesHtml = '';
       if (!isOngoing) {
         badgesHtml += deadlineBadge;
+        badgesHtml += deadlineDateBadge;
         if (t.carriedFrom && !t.hasDeadline) badgesHtml += '<span class="todo-badge">从' + formatDateShort(t.carriedFrom) + '开始，已拖' + daysBetween(t.carriedFrom, getToday()) + '天</span>';
       }
       if (isOngoing) {
@@ -1095,15 +1096,28 @@
       var t = state.allTodos[i];
       if (t.taskType !== 'todo' || t.done) continue;
 
+      // Skip completed chains (anchor.completedDate set): their per-day
+      // history copies stay "undone" but the task itself is finished.
+      var root = resolveUltimateRootTodo(t, state.allTodos);
+      if (root.carriedFrom === null && root.completedDate) continue;
+
       if (t.hasDeadline && t.deadline) {
         // DDL task: one entry per chain, show the deadline date
         var key = carryChainKey(t, state.allTodos);
         if (seen[key]) continue;
         seen[key] = true;
-        items.push({ text: t.text, date: t.deadline, kind: 'ddl' });
+        // Use the newest chain row's id so deleting removes the whole task
+        var chainRows = state.allTodos.filter(function(x) {
+          return x.taskType === 'todo' && carryChainKey(x, state.allTodos) === key;
+        });
+        var newest = null;
+        for (var c = 0; c < chainRows.length; c++) {
+          if (!newest || chainRows[c].date > newest.date) newest = chainRows[c];
+        }
+        items.push({ id: newest ? newest.id : t.id, text: t.text, date: t.deadline, kind: 'ddl' });
       } else if (t.date > today) {
         // Future-planned task (no DDL): show the planned date
-        items.push({ text: t.text, date: t.date, kind: 'future' });
+        items.push({ id: t.id, text: t.text, date: t.date, kind: 'future' });
       }
     }
 
@@ -1123,9 +1137,12 @@
       var badge = it.kind === 'ddl'
         ? '<span class="backlog-age' + (overdue ? ' overdue' : '') + '">DDL ' + formatDateShort(it.date) + '</span>'
         : '<span class="backlog-age">' + formatDateShort(it.date) + '</span>';
-      return '<div class="backlog-item">' +
+      return '<div class="backlog-item" data-id="' + it.id + '">' +
         '<span class="backlog-text">' + escapeHtml(it.text) + '</span>' +
         badge +
+        '<button class="backlog-delete-btn" data-action="future-delete" title="删除">' +
+          '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+        '</button>' +
       '</div>';
     }).join('');
   }
@@ -1553,10 +1570,10 @@
       if (isOngoing) cls += ' ongoing';
       // Deadline badge
       var deadlineBadge = '';
+      var deadlineDateBadge = '';
       if (t.hasDeadline && t.deadline) {
-        if (t.done) {
-          deadlineBadge = '<span class="todo-badge">DDL: ' + formatDateShort(t.deadline) + '</span>';
-        } else {
+        deadlineDateBadge = '<span class="todo-badge">截止 ' + formatDateShort(t.deadline) + '</span>';
+        if (!t.done) {
           var remaining = daysBetween(getToday(), t.deadline);
           if (remaining < 0) {
             deadlineBadge = '<span class="todo-badge deadline-overdue" data-action="cancel-deadline" title="点击取消">已逾期' + Math.abs(remaining) + '天</span>';
@@ -1570,6 +1587,7 @@
       var badgesHtml = '';
       if (!isOngoing) {
         badgesHtml += deadlineBadge;
+        badgesHtml += deadlineDateBadge;
         if (t.carriedFrom && !t.hasDeadline) badgesHtml += '<span class="todo-badge">从' + formatDateShort(t.carriedFrom) + '开始，已拖' + daysBetween(t.carriedFrom, getToday()) + '天</span>';
       }
       var html = '<div class="' + cls + '" data-id="' + t.id + '">';
@@ -2502,8 +2520,7 @@
     var id = item.dataset.id;
     var action = e.target.closest('[data-action]');
     if (!action) return;
-    if (action.dataset.action === 'backlog-done') handleBacklogDone(id);
-    else if (action.dataset.action === 'backlog-delete') handleDelete(id);
+    if (action.dataset.action === 'future-delete') handleDelete(id);
   });
 
   // History edit toggle
